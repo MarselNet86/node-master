@@ -1,6 +1,6 @@
-<p align="center"><img src="docs/readme/icon.svg" width="128" height="128" alt="Иконка xhttp-cdn-node: зелёный маршрут от клиента через CDN к серверу на чёрном скруглённом квадрате"></p>
+<p align="center"><img src="docs/readme/icon.svg" width="128" height="128" alt="Иконка node-master: зелёный маршрут от клиента через CDN к серверу на чёрном скруглённом квадрате"></p>
 
-<h1 align="center">xhttp-cdn-node</h1>
+<h1 align="center">node-master</h1>
 
 <p align="center"><b>Нода Remnawave за CDN одной командой.</b><br />
 На новом сервере или рядом с уже работающими VLESS и Hysteria2: nginx, сертификаты и тюнинг ядра на origin, проверка всей цепочки до CDN и чекер каждого сервера подписки.</p>
@@ -32,7 +32,7 @@
 Одна команда. Ubuntu 22.04/24.04/26.04 или Debian 12, root:
 
 ```sh
-git clone https://github.com/MarselNet86/xhttp-cdn-node.git && cd xhttp-cdn-node && sudo ./deploy.sh
+git clone https://github.com/MarselNet86/node-master.git && cd node-master && sudo ./deploy.sh
 ```
 
 Скрипт спросит домены и порты, поставит пакеты, выпустит сертификаты Let's Encrypt, настроит ядро и nginx. Потом он выдаст конфиги для панели в `out/remnawave/` и проведёт по ней: сначала профиль, затем нода с этим профилем. Ноду он запустит сам: попросит `SECRET_KEY` из `docker-compose.yml`, который покажет панель, поставит Docker, если его нет, и поднимет контейнер. В конце он проверит цепочку до CDN. Ответы он сохранит в `.env` с правами 600: там токен Cloudflare.
@@ -268,11 +268,11 @@ sudo apt-get install -y unzip && sudo unzip -o /tmp/xray.zip xray -d /usr/local/
 
 TLS для CDN-плеча заканчивается на origin nginx, xray за ним работает по HTTP. Reality не использует сертификат Let's Encrypt, Hysteria2 использует настоящий сертификат своего домена.
 
-| Компонент | Кто владеет | xhttp-cdn-node |
+| Компонент | Кто владеет | node-master |
 |---|---|---|
-| origin nginx | xhttp-cdn-node | создаёт, тюнит, перезагружает |
-| сертификаты origin | xhttp-cdn-node | выпускает и продлевает |
-| тюнинг ядра и лимиты | xhttp-cdn-node | применяет |
+| origin nginx | node-master | создаёт, тюнит, перезагружает |
+| сертификаты origin | node-master | выпускает и продлевает |
+| тюнинг ядра и лимиты | node-master | применяет |
 | конфиг xray на ноде | панель Remnawave | не трогает |
 | xhttp-инбаунд и `extra` хоста | вы, вручную в панели | рендерит готовые файлы из `.env` |
 | edge-сертификат CDN | Timeweb | не трогает |
@@ -342,5 +342,5 @@ tech.md       контракт проекта
 <p align="center">
   <a href="tech.md">Контракт проекта</a> ·
   <a href="remnawave/README.md">Конфиги для панели</a> ·
-  <a href="https://github.com/MarselNet86/xhttp-cdn-node/issues/new">Сообщить о проблеме</a>
+  <a href="https://github.com/MarselNet86/node-master/issues/new">Сообщить о проблеме</a>
 </p>
