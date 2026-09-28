@@ -207,11 +207,26 @@ host_extra() {
   emit_in_terminal
   [ "$status" -eq 0 ]
   # Step 2 asks for the node key instead.
-  [ "$(grep -o 'Press Enter when done' "$TMP/stderr" | wc -l)" -eq 5 ]
+  [ "$(grep -o 'when done' "$TMP/stderr" | wc -l)" -eq 5 ]
   emit_in_terminal
   [ "$status" -eq 0 ]
-  [ "$(grep -c 'Press Enter when done' "$TMP/stderr")" -eq 0 ]
+  [ "$(grep -c 'when done' "$TMP/stderr")" -eq 0 ]
   [[ "$output" == *"1. Config profile"* ]]
+}
+
+@test "in a terminal s at a pause shows the file of the step to copy, and so does ы" {
+  local shown
+  full_node
+  run bash -c 'source "$1" && remnawave::_interactive() { return 0; } &&
+    remnawave::emit 2>"$2" <<<"$(printf "s\n\n\321\213\n\n\n")"' _ "$REPO/lib/remnawave.sh" "$TMP/stderr"
+  [ "$status" -eq 0 ]
+  grep -q 'Enter when done, s shows config-profile.json:' "$TMP/stderr"
+  shown="$(sed -n '/^----- out\/remnawave\/config-profile.json: copy from the next line -----$/,/^----- end of config-profile.json -----$/p' \
+    "$TMP/stderr" | sed '1d;$d')"
+  [ "$shown" = "$(cat "$OUT/config-profile.json")" ]
+  grep -q '^----- out/remnawave/subscription-xray-json.json: copy from the next line -----$' "$TMP/stderr"
+  run grep -c 'host-xhttp-extra.json: copy from' "$TMP/stderr"
+  [ "$output" -eq 0 ]
 }
 
 @test "the files are private to root and valid JSON" {

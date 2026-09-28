@@ -147,7 +147,7 @@ remnawave::_guide() {
   printf '\n%sRemnawave panel and the CDN resource, step by step.%s The files are in %s/.\n' \
     "$bold" "$reset" "$out"
   # Profile names are unique in the panel too, so the node name serves as one.
-  remnawave::_step "Config profile" \
+  remnawave::_step "$REPO_ROOT/$out/config-profile.json" "Config profile" \
     "Config Profiles -> Create Config Profile -> the name $tag -> paste $out/config-profile.json -> Save." \
     "Inbounds: $inbounds." \
     "The node keeps a profile of its own? Put only $out/inbound-xhttp-cdn.json into its \"inbounds\"."
@@ -158,26 +158,63 @@ remnawave::_guide() {
     "The panel then shows docker-compose.yml: ./deploy.sh takes its SECRET_KEY and NODE_PORT once, keeps them in .env and runs the node from $NODE_COMPOSE, installing Docker when it is missing." \
     "A node already in the panel: the node card -> Change Profile -> the profile from step 1 with all its inbounds."
   remnawave::_node
-  remnawave::_step "Internal squad" \
+  remnawave::_step "" "Internal squad" \
     "Internal Squads -> the squad of your users (Default-Squad) -> turn the new inbounds on -> Save."
-  remnawave::_step "Subscription template" \
+  remnawave::_step "$REPO_ROOT/$out/subscription-xray-json.json" "Subscription template" \
     "Templates -> Xray JSON -> a new template -> paste $out/subscription-xray-json.json -> Save."
-  remnawave::_step "Hosts: Hosts -> Create new host, one per inbound; Advanced -> Xray JSON template: the one from step 4" \
+  remnawave::_step "$REPO_ROOT/$out/host-xhttp-extra.json" \
+    "Hosts: Hosts -> Create new host, one per inbound; Advanced -> Xray JSON template: the one from step 4" \
     "${hosts[@]}"
-  remnawave::_step "CDN resource (Timeweb)" \
+  remnawave::_step "" "CDN resource (Timeweb)" \
     "Source: ${ORIGIN_IP:-<IP of this server>}:${NGINX_TLS_PORT:-8444}, HTTPS for the source on." \
     "Distribution domain $CDN_DOMAIN: a CNAME to the technical domain of the resource (*.cdn.twcstorage.ru), then Let's Encrypt in the Timeweb panel." \
     "Caching stays on; ignoring cache headers, always online and large file acceleration stay off."
   printf '\nObfuscation fields stay identical in the inbound and the host extra (remnawave/README.md).\n'
 }
 
-# Prints a step, then waits per remnawave::_guide.
+# Prints a step, then waits per remnawave::_guide. FILE, when the step pastes one into the
+# panel, shows on s: no second session to read it.
 remnawave::_step() {
+  local file="$1"
+  shift
   remnawave::_print "$@"
   if ((pause > 0)) && remnawave::_interactive; then
-    printf '     %sPress Enter when done.%s ' "$UI_DIM" "$UI_RESET" >&2
-    read -r _ || true
+    remnawave::_wait "$file"
   fi
+}
+
+# Waits for Enter; s (ы on a Russian layout) prints FILE to copy it from the terminal.
+remnawave::_wait() {
+  local file="$1" key LC_ALL=C.UTF-8
+  remnawave::_ask_done "$file"
+  while IFS= read -rsn1 key; do
+    case "$key" in
+      "") break ;;
+      s | S | ы | Ы)
+        if [[ -n "$file" ]]; then
+          printf '\n' >&2
+          remnawave::_show "$file"
+          remnawave::_ask_done "$file"
+        fi
+        ;;
+    esac
+  done
+  printf '\n' >&2
+}
+
+remnawave::_ask_done() {
+  if [[ -n "$1" ]]; then
+    printf '     %sEnter when done, s shows %s:%s ' "$UI_DIM" "${1##*/}" "$UI_RESET" >&2
+  else
+    printf '     %sPress Enter when done.%s ' "$UI_DIM" "$UI_RESET" >&2
+  fi
+}
+
+# Prints FILE between two plain lines: no colour and no indent in what is copied.
+remnawave::_show() {
+  printf -- '----- %s: copy from the next line -----\n' "${1#"$REPO_ROOT"/}" >&2
+  cat "$1" >&2
+  printf -- '----- end of %s -----\n' "${1##*/}" >&2
 }
 
 # Prints step TITLE with its LINEs, skipping the empty ones.
