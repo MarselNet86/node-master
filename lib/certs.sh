@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Let's Encrypt certificates of the origin (tech.md §5): issues them per CERT_MODE, skips
-# the ones valid for more than 30 days, installs the renewal hooks.
+# Let's Encrypt certificates of this server (tech.md §5): issues them with HTTP-01 on :80,
+# skips the ones valid for more than 30 days, installs the renewal hooks.
 
 set -euo pipefail
 
@@ -17,7 +17,6 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/nginx.sh"
 
 # Paths as the host sees them; files are created under $SYSROOT, which only tests set.
 readonly CERTS_LE_DIR=/etc/letsencrypt
-readonly CERTS_CF_INI=/etc/letsencrypt/cdn-deploy/cloudflare.ini
 readonly CERTS_HOOKS=/etc/letsencrypt/renewal-hooks
 readonly CERTS_WEBROOT=/var/www/cdn-deploy-acme
 readonly CERTS_ACME_SITE=/etc/nginx/sites-available/cdn-deploy-acme.conf
@@ -27,27 +26,15 @@ readonly CERTS_PROBE=/.well-known/acme-challenge/cdn-deploy-probe
 readonly CERTS_MIN_DAYS=30
 
 # Issues the certificates that are missing, expiring, or renewed by another method than
-# CERT_MODE. Tries every domain before it fails with exit 6.
+# HTTP-01. Tries every domain before it fails with exit 6.
 certs::issue() {
   local domain hy2_issued=0 due=() failed=()
-  require::cmd certbot openssl
-  env::require CDN_DOMAIN CERT_MODE
+  require::cmd certbot openssl nginx envsubst curl
+  env::require VLESS_DOMAIN
   if [[ -n "${HY2_DOMAIN:-}" ]]; then
     env::require NODE_RELOAD_CMD
   fi
-  env::require_origin_cert
-  case "$CERT_MODE" in
-    dns-cloudflare)
-      env::require CF_API_TOKEN
-      certs::_write_cf_credentials
-      certs::_remove_acme_site
-      ;;
-    http-01)
-      require::cmd nginx envsubst curl
-      certs::_render_acme_site
-      ;;
-    *) log::die "$EXIT_INPUT" "CERT_MODE=$CERT_MODE: expected dns-cloudflare or http-01, rerun ./deploy.sh" ;;
-  esac
+  certs::_render_acme_site
   while IFS= read -r domain; do
     if certs::_is_current "$domain"; then
       log::info "certificate for $domain is valid for more than $CERTS_MIN_DAYS days, kept"
@@ -58,9 +45,7 @@ certs::issue() {
   if ((${#due[@]} == 0)); then
     return 0
   fi
-  if [[ "$CERT_MODE" == http-01 ]]; then
-    certs::_acme_on
-  fi
+  certs::_acme_on
   for domain in "${due[@]}"; do
     if certs::_certbot "$domain"; then
       if [[ "$domain" == "${HY2_DOMAIN:-}" ]]; then
@@ -70,33 +55,26 @@ certs::issue() {
       failed+=("$domain")
     fi
   done
-  if [[ "$CERT_MODE" == http-01 ]]; then
-    certs::_acme_off
-  fi
+  certs::_acme_off
   if ((hy2_issued)); then
     certs::_restart_node
   fi
   if ((${#failed[@]} > 0)); then
-    log::die "$EXIT_CERTS" "no certificate for: ${failed[*]}. $(certs::_hint) Details: /var/log/letsencrypt/letsencrypt.log"
+    log::die "$EXIT_CERTS" "no certificate for: ${failed[*]}. Check that each domain has an A record to ORIGIN_IP and that port 80 is open. Details: /var/log/letsencrypt/letsencrypt.log"
   fi
 }
 
-# Writes the certbot deploy hook, plus the :80 pre/post hooks under http-01, and makes
-# sure certbot.timer runs the renewals (tech.md §8).
+# Writes the certbot deploy hook and the pre/post hooks that open :80 for the renewals,
+# and makes sure certbot.timer runs them (tech.md §8).
 certs::install_renew_hook() {
-  local pre="$SYSROOT$CERTS_HOOKS/pre/cdn-deploy-acme.sh" post="$SYSROOT$CERTS_HOOKS/post/cdn-deploy-acme.sh"
-  env::require CERT_MODE
+  env::require VLESS_DOMAIN
   if [[ -n "${HY2_DOMAIN:-}" ]]; then
     env::require NODE_RELOAD_CMD
   fi
   mkdir -p "$SYSROOT$CERTS_HOOKS/deploy" "$SYSROOT$CERTS_HOOKS/pre" "$SYSROOT$CERTS_HOOKS/post"
   fs::write "$SYSROOT$CERTS_HOOKS/deploy/cdn-deploy.sh" 755 "$(certs::_deploy_hook)"
-  if [[ "$CERT_MODE" == http-01 ]]; then
-    fs::write "$pre" 755 "$(certs::_pre_hook)"
-    fs::write "$post" 755 "$(certs::_post_hook)"
-  else
-    certs::_remove "$pre" "$post"
-  fi
+  fs::write "$SYSROOT$CERTS_HOOKS/pre/cdn-deploy-acme.sh" 755 "$(certs::_pre_hook)"
+  fs::write "$SYSROOT$CERTS_HOOKS/post/cdn-deploy-acme.sh" 755 "$(certs::_post_hook)"
   if ! systemctl is-enabled --quiet certbot.timer 2>/dev/null; then
     systemctl enable --now certbot.timer >&2 ||
       log::warn "cannot enable certbot.timer: certificates will not renew until it runs"
@@ -105,23 +83,20 @@ certs::install_renew_hook() {
 
 # --- issuance ---------------------------------------------------------------------------
 
-# VLESS and Hysteria2 get a certificate when their domain is set: on a server that
-# already runs them, empty domains leave their certificates alone. CDN_DOMAIN gets one
-# per env::cdn_has_cert.
+# VLESS_DOMAIN always: origin nginx serves its certificate. Hysteria2 gets one when its
+# domain is set; an empty HY2_DOMAIN leaves the certificate of a server that already runs
+# it alone. CDN_DOMAIN gets none: it is a CNAME to the CDN, which HTTP-01 cannot validate,
+# and the edge serves the certificate of the CDN resource.
 certs::_domains() {
-  if [[ -n "${VLESS_DOMAIN:-}" ]]; then
-    printf '%s\n' "$VLESS_DOMAIN"
-  fi
-  if [[ -n "${HY2_DOMAIN:-}" && "$HY2_DOMAIN" != "${VLESS_DOMAIN:-}" ]]; then
+  printf '%s\n' "$VLESS_DOMAIN"
+  if [[ -n "${HY2_DOMAIN:-}" && "$HY2_DOMAIN" != "$VLESS_DOMAIN" ]]; then
     printf '%s\n' "$HY2_DOMAIN"
-  fi
-  if env::cdn_has_cert; then
-    printf '%s\n' "$CDN_DOMAIN"
   fi
 }
 
 # 0 when DOMAIN has a certificate that names it, stays valid for more than
-# CERTS_MIN_DAYS, and renews by the method CERT_MODE asks for.
+# CERTS_MIN_DAYS, and renews with HTTP-01 through the webroot. One that renews another way,
+# say with DNS-01 from an older setup, is issued again.
 certs::_is_current() {
   local domain="$1" san method
   local cert="$SYSROOT$CERTS_LE_DIR/live/$domain/fullchain.pem"
@@ -131,53 +106,22 @@ certs::_is_current() {
   san="$(openssl x509 -noout -ext subjectAltName -in "$cert" 2>/dev/null)" || return 1
   [[ "$san" =~ DNS:"$domain"(,|$) ]] || return 1
   method="$(sed -nE 's/^authenticator[[:space:]]*=[[:space:]]*//p' "$conf")"
-  [[ "$method" == "$(certs::_authenticator)" ]]
-}
-
-certs::_authenticator() {
-  if [[ "$CERT_MODE" == dns-cloudflare ]]; then
-    echo dns-cloudflare
-  else
-    echo webroot
-  fi
+  [[ "$method" == webroot ]]
 }
 
 # One lineage per domain keeps the paths at /etc/letsencrypt/live/<DOMAIN>/ (tech.md §8).
 # --force-renewal because this runs only for a certificate that has to change now.
 certs::_certbot() {
   local domain="$1" args
-  args=(certonly --non-interactive --agree-tos --force-renewal --cert-name "$domain" -d "$domain")
-  if [[ "$CERT_MODE" == dns-cloudflare ]]; then
-    # certbot's default of 10 s races the Cloudflare API on busy days.
-    args+=(--dns-cloudflare --dns-cloudflare-credentials "$CERTS_CF_INI"
-      --dns-cloudflare-propagation-seconds 30)
-  else
-    args+=(--webroot -w "$CERTS_WEBROOT")
-  fi
+  args=(certonly --non-interactive --agree-tos --force-renewal --cert-name "$domain" -d "$domain"
+    --webroot -w "$CERTS_WEBROOT")
   if [[ -n "${LE_EMAIL:-}" ]]; then
     args+=(--email "$LE_EMAIL" --no-eff-email)
   else
     args+=(--register-unsafely-without-email)
   fi
-  log::info "issuing a certificate for $domain via $CERT_MODE"
+  log::info "issuing a certificate for $domain via HTTP-01"
   certbot "${args[@]}" >&2
-}
-
-certs::_hint() {
-  if [[ "$CERT_MODE" == dns-cloudflare ]]; then
-    echo "Check that CF_API_TOKEN has Zone:DNS:Edit on the zone of each domain."
-  else
-    echo "Check that each domain has an A record to ORIGIN_IP and that port 80 is open."
-  fi
-}
-
-certs::_write_cf_credentials() {
-  local dir="$SYSROOT${CERTS_CF_INI%/*}"
-  mkdir -p "$dir"
-  chmod 700 "$dir"
-  fs::write "$SYSROOT$CERTS_CF_INI" 600 \
-    "# cdn-deploy: Cloudflare API token for certbot DNS-01, taken from .env
-dns_cloudflare_api_token = $CF_API_TOKEN"
 }
 
 # The Hysteria2 inbound loads its certificate when the node starts. On a new server the
@@ -245,17 +189,6 @@ certs::_acme_off() {
   nginx::reload || log::die "$EXIT_CERTS" "nginx still serves the ACME server on :80: fix nginx and reload it"
 }
 
-certs::_remove_acme_site() {
-  local was_enabled=0
-  if [[ -L "$SYSROOT$CERTS_ACME_LINK" ]]; then
-    was_enabled=1
-  fi
-  certs::_remove "$SYSROOT$CERTS_ACME_LINK" "$SYSROOT$CERTS_ACME_SITE"
-  if ((was_enabled)); then
-    nginx::reload || log::die "$EXIT_CERTS" "nginx still serves the ACME server on :80: fix nginx and reload it"
-  fi
-}
-
 # --- renewal hooks ----------------------------------------------------------------------
 
 # certbot sets RENEWED_DOMAINS for deploy hooks. Only the Hysteria2 certificate lives in
@@ -291,7 +224,7 @@ EOF
 certs::_pre_hook() {
   cat <<EOF
 #!/bin/sh
-# cdn-deploy, CERT_MODE=http-01: opens :80 for the challenges before certbot renews.
+# cdn-deploy: opens :80 for the HTTP-01 challenges before certbot renews.
 $(certs::_sh_reload)
 close() {
   rm -f $CERTS_ACME_LINK
@@ -332,7 +265,7 @@ EOF
 certs::_post_hook() {
   cat <<EOF
 #!/bin/sh
-# cdn-deploy, CERT_MODE=http-01: closes :80 again after certbot renews.
+# cdn-deploy: closes :80 again after certbot renews.
 $(certs::_sh_reload)
 rm -f $CERTS_ACME_LINK
 reload
@@ -356,14 +289,4 @@ EOF
 certs::_sh_quote() {
   local s="$1" q="'\\''"
   printf "'%s'" "${s//\'/$q}"
-}
-
-certs::_remove() {
-  local path
-  for path in "$@"; do
-    if [[ -e "$path" || -L "$path" ]]; then
-      rm -f "$path"
-      log::info "removed $path: CERT_MODE=$CERT_MODE does not use it"
-    fi
-  done
 }

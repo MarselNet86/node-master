@@ -19,19 +19,14 @@ setup() {
   echo stock >"$ROOT/etc/nginx/nginx.conf"
   echo "server { listen 80 default_server; }" >"$ROOT/etc/nginx/sites-available/default"
   ln -s /etc/nginx/sites-available/default "$ROOT/etc/nginx/sites-enabled/default"
-  local domain
-  for domain in cdn.example.com vless.example.com; do
-    mkdir -p "$ROOT/etc/letsencrypt/live/$domain"
-    echo cert >"$ROOT/etc/letsencrypt/live/$domain/fullchain.pem"
-    echo key >"$ROOT/etc/letsencrypt/live/$domain/privkey.pem"
-  done
+  mkdir -p "$ROOT/etc/letsencrypt/live/vless.example.com"
+  echo cert >"$ROOT/etc/letsencrypt/live/vless.example.com/fullchain.pem"
+  echo key >"$ROOT/etc/letsencrypt/live/vless.example.com/privkey.pem"
   VLESS_DOMAIN=vless.example.com
   CDN_DOMAIN=cdn.example.com
   XHTTP_PORT=4443
   XHTTP_PATH=/api/v2.jpg/
   NGINX_TLS_PORT=8444
-  CERT_MODE=dns-cloudflare
-  ISSUE_CDN_ORIGIN_CERT=true
   CONF="$ROOT/etc/nginx/nginx.conf"
   SITE="$ROOT/etc/nginx/sites-available/cdn-deploy.conf"
 }
@@ -165,37 +160,20 @@ has() {
   [ "$(grep -A1 -F 'location = /cdn/v1.bin {' "$SITE" | tail -n 1 | tr -s ' ')" = ' rewrite ^ /cdn/v1.bin/ last;' ]
 }
 
-@test "a CDN-only server names only CDN_DOMAIN and serves its certificate" {
-  VLESS_DOMAIN=""
+@test "the origin names CDN_DOMAIN and serves the certificate of VLESS_DOMAIN" {
   run nginx::render
   [ "$status" -eq 0 ]
-  has "$SITE" 'server_name cdn.example.com;'
-  has "$SITE" 'ssl_certificate /etc/letsencrypt/live/cdn.example.com/fullchain.pem;'
+  has "$SITE" 'server_name cdn.example.com vless.example.com;'
+  has "$SITE" 'ssl_certificate /etc/letsencrypt/live/vless.example.com/fullchain.pem;'
+  has "$SITE" 'ssl_certificate_key /etc/letsencrypt/live/vless.example.com/privkey.pem;'
 }
 
-@test "without a certificate source for the origin, render exits 2 and changes nothing" {
+@test "without VLESS_DOMAIN render exits 2 and changes nothing" {
   VLESS_DOMAIN=""
-  CERT_MODE=http-01
   run nginx::render
   [ "$status" -eq 2 ]
-  [[ "$output" == *"origin nginx needs a certificate: set VLESS_DOMAIN to a domain of this server"* ]]
+  [[ "$output" == *"required settings are empty: VLESS_DOMAIN"* ]]
   [ ! -e "$SITE" ]
-}
-
-@test "the origin serves the CDN certificate when one is issued, the VLESS one otherwise" {
-  run nginx::render
-  [ "$status" -eq 0 ]
-  has "$SITE" 'ssl_certificate /etc/letsencrypt/live/cdn.example.com/fullchain.pem;'
-  has "$SITE" 'ssl_certificate_key /etc/letsencrypt/live/cdn.example.com/privkey.pem;'
-  ISSUE_CDN_ORIGIN_CERT=false
-  run nginx::render
-  [ "$status" -eq 0 ]
-  has "$SITE" 'ssl_certificate /etc/letsencrypt/live/vless.example.com/fullchain.pem;'
-  ISSUE_CDN_ORIGIN_CERT=true
-  CERT_MODE=http-01
-  run nginx::render
-  [ "$status" -eq 0 ]
-  has "$SITE" 'ssl_certificate /etc/letsencrypt/live/vless.example.com/fullchain.pem;'
 }
 
 @test "the config id endpoint answers only the loopback" {
@@ -209,11 +187,11 @@ has() {
 
 @test "a missing certificate exits 7 and changes nothing" {
   local before
-  rm "$ROOT/etc/letsencrypt/live/cdn.example.com/privkey.pem"
+  rm "$ROOT/etc/letsencrypt/live/vless.example.com/privkey.pem"
   before="$(snapshot "$ROOT")"
   run nginx::render
   [ "$status" -eq 7 ]
-  [[ "$output" == *"no certificate in /etc/letsencrypt/live/cdn.example.com"* ]]
+  [[ "$output" == *"no certificate in /etc/letsencrypt/live/vless.example.com"* ]]
   [ "$(snapshot "$ROOT")" = "$before" ]
   [ "$(calls .)" -eq 0 ]
 }

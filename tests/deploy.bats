@@ -56,8 +56,7 @@ step_line() {
   has_line '^ +XHTTP_PORT +4443$'
   has_line '^ +XHTTP_PATH +/api/v2\.jpg/$'
   has_line '^ +NGINX_TLS_PORT +8444$'
-  has_line '^ +CERT_MODE +dns-cloudflare$'
-  has_line 'nginx .*:8444 <CDN_DOMAIN> \(certificate of <CDN_DOMAIN>\) -> 127\.0\.0\.1:4443'
+  has_line 'nginx .*:8444 <CDN_DOMAIN> \(certificate of <VLESS_DOMAIN>\) -> 127\.0\.0\.1:4443'
   has_line '^ +NODE_PORT +2222$'
   has_line '^ +NODE_SECRET_KEY +<unset>$'
   has_line 'remnawave .*start the node from /opt/remnanode/docker-compose\.yml with its SECRET_KEY, installing Docker'
@@ -81,7 +80,6 @@ HY2_DOMAIN=hy2.example.com
 CDN_DOMAIN=cdn.example.com
 ORIGIN_IP=203.0.113.10
 XHTTP_PORT=4450
-CF_API_TOKEN=tok-7f3a9
 REALITY_PRIVATE_KEY=c3ludGhldGljLXJlYWxpdHkta2V5LWZvci10ZXN0cyE
 NODE_SECRET_KEY=bm9kZS1zZWNyZXQtZm9yLXRlc3Rz
 EOF
@@ -89,50 +87,39 @@ EOF
   deploy --dry-run
   [ "$status" -eq 0 ]
   has_line '^ +VLESS_DOMAIN +vless\.example\.com$'
-  has_line '^ +CF_API_TOKEN +<hidden>$'
   has_line '^ +REALITY_PRIVATE_KEY +<hidden>$'
   has_line '^ +NODE_SECRET_KEY +<hidden>$'
   has_line 'remnawave .*with its SECRET_KEY and /etc/letsencrypt mounted for Hysteria2'
-  has_line 'certs .*vless\.example\.com hy2\.example\.com cdn\.example\.com'
-  has_line 'nginx .*:8444 cdn\.example\.com \(certificate of cdn\.example\.com\) -> 127\.0\.0\.1:4450'
-  [[ "$output $(cat "$TMP/stderr")" != *tok-7f3a9* ]]
+  has_line 'certs .*via HTTP-01 on :80: vless\.example\.com hy2\.example\.com; skip'
+  has_line 'nginx .*:8444 cdn\.example\.com \(certificate of vless\.example\.com\) -> 127\.0\.0\.1:4450'
   [[ "$output $(cat "$TMP/stderr")" != *c3ludGhldGljLXJl* ]]
   [[ "$output $(cat "$TMP/stderr")" != *bm9kZS1zZWNyZXQ* ]]
 }
 
-@test "--dry-run plans no CDN certificate under http-01 or ISSUE_CDN_ORIGIN_CERT=false" {
-  local setting certs
-  for setting in CERT_MODE=http-01 ISSUE_CDN_ORIGIN_CERT=false; do
-    printf 'VLESS_DOMAIN=vless.example.com\nCDN_DOMAIN=cdn.example.com\n%s\n' "$setting" \
-      >"$REPO/.env"
-    deploy --dry-run
-    [ "$status" -eq 0 ]
-    certs="$(step_line certs)"
-    [[ "$certs" == *"serves the VLESS_DOMAIN certificate"* ]]
-    [[ "$certs" != *cdn.example.com* ]] || {
-      echo "$setting still plans a CDN certificate"
-      return 1
-    }
-    [[ "$(step_line nginx)" == *"(certificate of vless.example.com)"* ]]
-  done
-}
-
-@test "--dry-run plans a CDN-only server: no VLESS or Hysteria2 certificate, no node restart" {
-  printf 'CDN_DOMAIN=cdn.example.com\nORIGIN_IP=203.0.113.10\n' >"$REPO/.env"
+@test "--dry-run plans no CDN certificate and :80 hooks for every renewal" {
+  printf 'VLESS_DOMAIN=vless.example.com\nCDN_DOMAIN=cdn.example.com\nCERT_MODE=dns-cloudflare\n' >"$REPO/.env"
   deploy --dry-run
   [ "$status" -eq 0 ]
-  has_line '^ +VLESS_DOMAIN +<unset>$'
-  [[ "$(step_line certs)" == *"via dns-cloudflare: cdn.example.com; skip"* ]]
+  [[ "$(step_line certs)" != *cdn.example.com* ]]
+  [[ "$(step_line renew-hook)" == *"pre/post hooks open :80 for HTTP-01"* ]]
+  [[ "$(step_line nginx)" == *"(certificate of vless.example.com)"* ]]
+  # A CERT_MODE left from an older .env passes without a word.
+  [[ "$(cat "$TMP/stderr")" != *CERT_MODE* ]]
+}
+
+@test "--dry-run plans no node restart without HY2_DOMAIN" {
+  printf 'VLESS_DOMAIN=vless.example.com\nCDN_DOMAIN=cdn.example.com\nORIGIN_IP=203.0.113.10\n' >"$REPO/.env"
+  deploy --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$(step_line certs)" == *"via HTTP-01 on :80: vless.example.com; skip"* ]]
   [[ "$(step_line renew-hook)" == *"no node restart: HY2_DOMAIN is not set"* ]]
-  [[ "$(step_line nginx)" == *"(certificate of cdn.example.com)"* ]]
-  [[ "$(cat "$TMP/stderr")" != *"needs a certificate"* ]]
 }
 
-@test "--dry-run warns when origin nginx would have no certificate" {
-  printf 'CDN_DOMAIN=cdn.example.com\nCERT_MODE=http-01\n' >"$REPO/.env"
+@test "--dry-run warns that a real run stops without VLESS_DOMAIN" {
+  printf 'CDN_DOMAIN=cdn.example.com\n' >"$REPO/.env"
   deploy --dry-run
   [ "$status" -eq 0 ]
-  [[ "$(cat "$TMP/stderr")" == *"a real run stops here: origin nginx needs a certificate: set VLESS_DOMAIN"* ]]
+  [[ "$(cat "$TMP/stderr")" == *"a real run stops here: required settings are empty: VLESS_DOMAIN"* ]]
   [[ "$(step_line nginx)" == *"(certificate of <VLESS_DOMAIN>)"* ]]
 }
 

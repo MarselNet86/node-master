@@ -19,11 +19,8 @@ setup() {
   VLESS_DOMAIN=vless.example.com
   HY2_DOMAIN=hy2.example.com
   CDN_DOMAIN=cdn.example.com
-  CERT_MODE=dns-cloudflare
-  CF_API_TOKEN=tok-7f3a9
   LE_EMAIL=""
   NODE_RELOAD_CMD="docker restart remnawave-node"
-  ISSUE_CDN_ORIGIN_CERT=true
 }
 
 teardown() {
@@ -57,7 +54,6 @@ name="" method=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --cert-name) name="$2"; shift ;;
-    --dns-cloudflare) method=dns-cloudflare ;;
     --webroot) method=webroot ;;
   esac
   shift
@@ -126,51 +122,36 @@ snapshot() {
   find "$1" -type f -exec cksum {} + | sort
 }
 
-@test "dns-cloudflare issues VLESS, HY2 and CDN certificates with a private token file" {
+@test "HTTP-01 issues the VLESS and Hysteria2 certificates through the webroot" {
   local domain
   run certs::issue
   [ "$status" -eq 0 ]
-  [ "$(calls '^certbot certonly')" -eq 3 ]
-  for domain in vless.example.com hy2.example.com cdn.example.com; do
-    grep -qF -- "--cert-name $domain -d $domain --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cdn-deploy/cloudflare.ini" \
-      "$TMP/calls" || {
-      echo "no DNS-01 call for $domain"
+  [ "$(calls '^certbot certonly')" -eq 2 ]
+  for domain in vless.example.com hy2.example.com; do
+    grep -qF -- "--cert-name $domain -d $domain --webroot -w /var/www/cdn-deploy-acme" "$TMP/calls" || {
+      echo "no HTTP-01 call for $domain"
       return 1
     }
     [ -s "$LE/live/$domain/fullchain.pem" ]
   done
-  [ "$(sed -n 's/^dns_cloudflare_api_token = //p' "$LE/cdn-deploy/cloudflare.ini")" = tok-7f3a9 ]
-  [ -n "$(find "$LE/cdn-deploy/cloudflare.ini" -perm 600)" ]
-  [ -n "$(find "$LE/cdn-deploy" -maxdepth 0 -perm 700)" ]
-  [[ "$output" != *tok-7f3a9* ]]
+  [[ "$output" == *"issuing a certificate for vless.example.com via HTTP-01"* ]]
 }
 
-@test "ISSUE_CDN_ORIGIN_CERT=false leaves CDN_DOMAIN without a certificate" {
-  ISSUE_CDN_ORIGIN_CERT=false
-  run certs::issue
-  [ "$status" -eq 0 ]
-  [ "$(calls '^certbot certonly')" -eq 2 ]
-  [ ! -e "$LE/live/cdn.example.com" ]
-}
-
-@test "a server that already runs VLESS and Hysteria2 gets only the CDN certificate" {
-  VLESS_DOMAIN=""
+@test "a server that already runs Hysteria2 gets only the VLESS certificate" {
   HY2_DOMAIN=""
   NODE_RELOAD_CMD=""
   run certs::issue
   [ "$status" -eq 0 ]
   [ "$(calls '^certbot certonly')" -eq 1 ]
-  [ "$(calls '--cert-name cdn.example.com ')" -eq 1 ]
+  [ "$(calls '--cert-name vless.example.com ')" -eq 1 ]
   [ "$(calls '^docker')" -eq 0 ]
 }
 
-@test "http-01 without a domain of this server exits 2 before certbot runs" {
+@test "without VLESS_DOMAIN the certs step exits 2 before certbot runs" {
   VLESS_DOMAIN=""
-  HY2_DOMAIN=""
-  CERT_MODE=http-01
   run certs::issue
   [ "$status" -eq 2 ]
-  [[ "$output" == *"origin nginx needs a certificate"* ]]
+  [[ "$output" == *"required settings are empty: VLESS_DOMAIN"* ]]
   [ "$(calls .)" -eq 0 ]
 }
 
@@ -195,23 +176,21 @@ snapshot() {
 }
 
 @test "a certificate with 31 days left is kept, one with 30 or less is issued again" {
-  fake-cert vless.example.com 31 dns-cloudflare
-  fake-cert hy2.example.com 30 dns-cloudflare
+  fake-cert vless.example.com 31 webroot
+  fake-cert hy2.example.com 30 webroot
   run certs::issue
   [ "$status" -eq 0 ]
   [ "$(calls '--cert-name vless.example.com ')" -eq 0 ]
   [ "$(calls '--cert-name hy2.example.com ')" -eq 1 ]
 }
 
-@test "a certificate for another name or renewed by another method is issued again" {
-  fake-cert vless.example.com 90 dns-cloudflare other.example.com
-  fake-cert hy2.example.com 90 webroot
-  fake-cert cdn.example.com 90 dns-cloudflare
+@test "a certificate for another name or renewed by DNS-01 of an older setup is issued again" {
+  fake-cert vless.example.com 90 webroot other.example.com
+  fake-cert hy2.example.com 90 dns-cloudflare
   run certs::issue
   [ "$status" -eq 0 ]
   [ "$(calls '--cert-name vless.example.com ')" -eq 1 ]
   [ "$(calls '--cert-name hy2.example.com ')" -eq 1 ]
-  [ "$(calls '--cert-name cdn.example.com ')" -eq 0 ]
   # Without --force-renewal certbot keeps a certificate that is not due yet.
   [ "$(calls '^certbot certonly .*--force-renewal .*--cert-name hy2.example.com ')" -eq 1 ]
 }
@@ -220,15 +199,13 @@ snapshot() {
   echo hy2.example.com >"$TMP/certbot-fail"
   run certs::issue
   [ "$status" -eq 6 ]
-  [ "$(calls '^certbot certonly')" -eq 3 ]
-  [[ "$output" == *"no certificate for: hy2.example.com."* ]]
-  [[ "$output" == *"Zone:DNS:Edit"* ]]
-  [ -s "$LE/live/cdn.example.com/fullchain.pem" ]
+  [ "$(calls '^certbot certonly')" -eq 2 ]
+  [[ "$output" == *"no certificate for: hy2.example.com. Check that each domain has an A record to ORIGIN_IP and that port 80 is open."* ]]
+  [ -s "$LE/live/vless.example.com/fullchain.pem" ]
 }
 
-@test "http-01 opens :80 only around certbot and never issues CDN_DOMAIN" {
+@test "opens :80 only around certbot and never issues CDN_DOMAIN" {
   local site="$TMP/root/etc/nginx/sites-available/cdn-deploy-acme.conf" sequence
-  CERT_MODE=http-01
   run certs::issue
   [ "$status" -eq 0 ]
   grep -qF 'server_name vless.example.com hy2.example.com;' "$site"
@@ -241,8 +218,7 @@ snapshot() {
   [ "$sequence" = "nginx -t|nginx -s reload|certbot vless.example.com /var/www/cdn-deploy-acme|certbot hy2.example.com /var/www/cdn-deploy-acme|nginx -s reload|" ]
 }
 
-@test "http-01 leaves nginx as it was when nginx rejects the ACME server" {
-  CERT_MODE=http-01
+@test "leaves nginx as it was when nginx rejects the ACME server" {
   touch "$TMP/nginx-t-fail"
   run certs::issue
   [ "$status" -eq 6 ]
@@ -251,16 +227,14 @@ snapshot() {
   [ "$(calls '^certbot')" -eq 0 ]
 }
 
-@test "http-01 waits for the ACME server to answer after the reload" {
-  CERT_MODE=http-01
+@test "waits for the ACME server to answer after the reload" {
   run certs::issue
   [ "$status" -eq 0 ]
   [ "$(calls "^curl .*-H Host: vless.example.com http://127.0.0.1/.well-known/acme-challenge/cdn-deploy-probe")" -eq 10 ]
   [ ! -e "$TMP/root/var/www/cdn-deploy-acme/.well-known/acme-challenge/cdn-deploy-probe" ]
 }
 
-@test "http-01 gives up and closes :80 when the ACME server never answers" {
-  CERT_MODE=http-01
+@test "gives up and closes :80 when the ACME server never answers" {
   touch "$TMP/curl-silent"
   run certs::issue
   [ "$status" -eq 6 ]
@@ -269,8 +243,7 @@ snapshot() {
   [ "$(calls '^certbot')" -eq 0 ]
 }
 
-@test "http-01 keeps :80 closed when nginx fails to reload" {
-  CERT_MODE=http-01
+@test "keeps :80 closed when nginx fails to reload" {
   touch "$TMP/nginx-reload-fail"
   run certs::issue
   [ "$status" -eq 6 ]
@@ -279,8 +252,7 @@ snapshot() {
   [ "$(calls '^certbot')" -eq 0 ]
 }
 
-@test "http-01 closes :80 again when certbot fails" {
-  CERT_MODE=http-01
+@test "closes :80 again when certbot fails" {
   echo vless.example.com >"$TMP/certbot-fail"
   run certs::issue
   [ "$status" -eq 6 ]
@@ -289,8 +261,7 @@ snapshot() {
   [[ "$output" == *"port 80 is open"* ]]
 }
 
-@test "http-01 starts nginx when it is down instead of reloading it" {
-  CERT_MODE=http-01
+@test "starts nginx when it is down instead of reloading it" {
   touch "$TMP/nginx-down"
   run certs::issue
   [ "$status" -eq 0 ]
@@ -298,25 +269,12 @@ snapshot() {
   [ "$(calls 'nginx -s reload')" -eq 0 ]
 }
 
-@test "switching to dns-cloudflare reissues and removes the ACME server" {
-  CERT_MODE=http-01
-  run certs::issue
-  [ "$status" -eq 0 ]
-  [ -e "$TMP/root/etc/nginx/sites-available/cdn-deploy-acme.conf" ]
-  : >"$TMP/calls"
-  CERT_MODE=dns-cloudflare
-  run certs::issue
-  [ "$status" -eq 0 ]
-  [ "$(calls '^certbot certonly .*--dns-cloudflare ')" -eq 3 ]
-  [ ! -e "$TMP/root/etc/nginx/sites-available/cdn-deploy-acme.conf" ]
-}
-
 @test "a new Hysteria2 certificate restarts the node, a kept one does not" {
   run certs::issue
   [ "$status" -eq 0 ]
   [ "$(calls '^docker \[restart\] \[remnawave-node\]$')" -eq 1 ]
   : >"$TMP/calls"
-  fake-cert vless.example.com 10 dns-cloudflare
+  fake-cert vless.example.com 10 webroot
   run certs::issue
   [ "$status" -eq 0 ]
   [ "$(calls '^certbot certonly')" -eq 1 ]
@@ -332,7 +290,6 @@ snapshot() {
 
 @test "LE_EMAIL goes to certbot, an empty one registers without email" {
   HY2_DOMAIN=vless.example.com
-  ISSUE_CDN_ORIGIN_CERT=false
   LE_EMAIL=ops@example.com
   run certs::issue
   [ "$status" -eq 0 ]
@@ -342,13 +299,6 @@ snapshot() {
   run certs::issue
   [ "$status" -eq 0 ]
   [ "$(calls '--register-unsafely-without-email$')" -eq 1 ]
-}
-
-@test "an unknown CERT_MODE exits 2" {
-  CERT_MODE=manual
-  run certs::issue
-  [ "$status" -eq 2 ]
-  [ "$(calls .)" -eq 0 ]
 }
 
 @test "install_renew_hook writes an executable deploy hook and turns certbot.timer on" {
@@ -425,9 +375,8 @@ snapshot() {
   [ "$(calls '^systemctl enable')" -eq 0 ]
 }
 
-@test "http-01 adds the :80 pre and post hooks, dns-cloudflare removes them" {
+@test "install_renew_hook adds the pre and post hooks that open :80 for the renewals" {
   local pre="$LE/renewal-hooks/pre/cdn-deploy-acme.sh" post="$LE/renewal-hooks/post/cdn-deploy-acme.sh"
-  CERT_MODE=http-01
   run certs::install_renew_hook
   [ "$status" -eq 0 ]
   sh -n "$pre"
@@ -436,9 +385,4 @@ snapshot() {
   grep -qF 'ln -sfn /etc/nginx/sites-available/cdn-deploy-acme.conf /etc/nginx/sites-enabled/cdn-deploy-acme.conf' "$pre"
   grep -qF "curl -s --max-time 2 -H 'Host: vless.example.com' http://127.0.0.1/.well-known/acme-challenge/cdn-deploy-probe" "$pre"
   grep -qF 'rm -f /etc/nginx/sites-enabled/cdn-deploy-acme.conf' "$post"
-  CERT_MODE=dns-cloudflare
-  run certs::install_renew_hook
-  [ "$status" -eq 0 ]
-  [ ! -e "$pre" ]
-  [ ! -e "$post" ]
 }

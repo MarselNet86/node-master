@@ -26,8 +26,7 @@ readonly NGINX_DEFAULT_LINK=/etc/nginx/sites-enabled/default
 nginx::render() {
   local cert_dir main site id saved changed=0
   require::cmd nginx envsubst curl
-  env::require CDN_DOMAIN XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT CERT_MODE
-  env::require_origin_cert
+  env::require CDN_DOMAIN XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT VLESS_DOMAIN
   cert_dir="$(nginx::_cert_dir)"
   if [[ ! -r "$SYSROOT$cert_dir/fullchain.pem" || ! -r "$SYSROOT$cert_dir/privkey.pem" ]]; then
     log::die "$EXIT_NGINX" "no certificate in $cert_dir: the certs step issues it, rerun ./deploy.sh"
@@ -99,14 +98,16 @@ nginx::reload() {
 
 # --- rendering --------------------------------------------------------------------------
 
+# The certificate of VLESS_DOMAIN, a name of this server. Timeweb takes it: the CDN edge
+# does not check the name of the origin certificate against CDN_DOMAIN.
 nginx::_cert_dir() {
-  echo "/etc/letsencrypt/live/$(env::origin_cert_domain)"
+  echo "/etc/letsencrypt/live/$VLESS_DOMAIN"
 }
 
 # Renders templates/NAME with the cert directory CERT_DIR and the config id CONFIG_ID.
 # Only the listed placeholders change, so nginx variables such as $request_method stay.
 nginx::_template() {
-  local name="$1" bare="${XHTTP_PATH%/}" names="$CDN_DOMAIN${VLESS_DOMAIN:+ $VLESS_DOMAIN}" out
+  local name="$1" bare="${XHTTP_PATH%/}" names="$CDN_DOMAIN $VLESS_DOMAIN" out
   # shellcheck disable=SC2016  # envsubst takes the placeholder list literally
   out="$(XHTTP_PORT="$XHTTP_PORT" XHTTP_PATH="$XHTTP_PATH" XHTTP_PATH_BARE="$bare" \
     NGINX_TLS_PORT="$NGINX_TLS_PORT" CDN_DOMAIN="$CDN_DOMAIN" SERVER_NAMES="$names" \

@@ -22,21 +22,19 @@ prompt::collect() {
   fi
   log::info "Enter keeps the value in [brackets]"
   for key in "${ENV_KEYS[@]}"; do
+    # A key left without a question keeps its current value.
     if ! prompt::_asks "$key"; then
-      prompt::_skip "$key"
       continue
     fi
     prompt::_number "$key"
     case "$key" in
       ORIGIN_IP) prompt::_ask_origin_ip ;;
-      ISSUE_CDN_ORIGIN_CERT) prompt::_ask_issue_cdn_cert ;;
       REALITY_PRIVATE_KEY | REALITY_SHORT_ID) prompt::_ask_reality "$key" ;;
       NODE_NAME) prompt::_ask_node_name ;;
       *) prompt::_ask "$key" ;;
     esac
   done
   UI_NUMBER=""
-  prompt::_ask_origin_domain
   prompt::_write_env
 }
 
@@ -47,7 +45,6 @@ prompt::_asks() {
   case "$key" in
     # Panel step 2 asks for them: the panel creates the node from the rendered profile.
     NODE_PORT | NODE_SECRET_KEY) return 1 ;;
-    CF_API_TOKEN | ISSUE_CDN_ORIGIN_CERT) by=CERT_MODE ;;
     NODE_RELOAD_CMD) by=HY2_DOMAIN ;;
     REALITY_PRIVATE_KEY | REALITY_SHORT_ID) by=REALITY_SNI ;;
     *) return 0 ;;
@@ -56,23 +53,11 @@ prompt::_asks() {
     return 0
   fi
   case "$key" in
-    # Only DNS-01 needs the token. http-01 cannot validate CDN_DOMAIN, a CNAME to the CDN.
-    CF_API_TOKEN) [[ "${CERT_MODE:-}" == dns-cloudflare ]] ;;
-    ISSUE_CDN_ORIGIN_CERT) [[ "${CERT_MODE:-}" != http-01 ]] ;;
     # The restart makes the node load a renewed HY2_DOMAIN certificate.
     NODE_RELOAD_CMD) [[ -n "${HY2_DOMAIN:-}" ]] ;;
     # Without REALITY_SNI there is no Reality inbound.
     *) [[ -n "${REALITY_SNI:-}" ]] ;;
   esac
-}
-
-# A key left without a question keeps its current value. The exception: http-01 forces
-# ISSUE_CDN_ORIGIN_CERT=false (tech.md §4).
-prompt::_skip() {
-  if [[ "$1" == ISSUE_CDN_ORIGIN_CERT ]]; then
-    export ISSUE_CDN_ORIGIN_CERT=false
-    log::info "ISSUE_CDN_ORIGIN_CERT=false: http-01 cannot validate CDN_DOMAIN, origin nginx serves the VLESS_DOMAIN certificate"
-  fi
 }
 
 # Numbers the question for KEY in UI_NUMBER, as "3/14". KEY and the keys after it are
@@ -100,12 +85,12 @@ prompt::validate() {
   case "$key" in
     VLESS_DOMAIN | HY2_DOMAIN | CDN_DOMAIN)
       sample="${key%%_*}"
-      # VLESS and Hysteria2 are optional: a server that already runs them adds only the
-      # CDN. VLESS_DOMAIN stays required when the origin certificate has to come from it.
-      if [[ -z "$value" && "$key" != CDN_DOMAIN ]]; then
-        if [[ "$key" == VLESS_DOMAIN ]] && ! env::cdn_has_cert; then
-          reason="origin nginx needs a certificate for a domain of this server: under http-01 or ISSUE_CDN_ORIGIN_CERT=false it is VLESS_DOMAIN"
-        fi
+      # Hysteria2 is optional: a server that already runs it adds only the CDN. VLESS_DOMAIN
+      # is not: HTTP-01 issues the certificate of origin nginx for it.
+      if [[ -z "$value" && "$key" == HY2_DOMAIN ]]; then
+        :
+      elif [[ -z "$value" && "$key" == VLESS_DOMAIN ]]; then
+        reason="required: a domain of this server with an A record, origin nginx serves its certificate"
       elif ! is::fqdn "$value"; then
         reason="expected a domain name like ${sample,,}.example.com$(prompt::_foreign_chars "$value")"
       elif [[ "$key" == CDN_DOMAIN &&
@@ -133,19 +118,6 @@ prompt::validate() {
         reason="expected a path like /api/v2.jpg/: starts and ends with /, letters, digits and . _ ~ -"
       fi
       ;;
-    CERT_MODE)
-      [[ "$value" == dns-cloudflare || "$value" == http-01 ]] ||
-        reason="expected dns-cloudflare or http-01"
-      ;;
-    CF_API_TOKEN)
-      # Cloudflare tokens use the base64url alphabet; anything else is a paste error. The
-      # input is hidden, so the reason says what arrived.
-      if [[ -z "$value" ]]; then
-        reason="nothing entered: the input stays hidden, paste the token and press Enter"
-      elif [[ ! "$value" =~ ^[A-Za-z0-9_-]+$ ]]; then
-        reason="expected a Cloudflare API token: letters, digits, - and _$(prompt::_foreign_chars "$value" A-Za-z0-9_-)"
-      fi
-      ;;
     LE_EMAIL)
       if [[ -n "$value" ]] && ! prompt::_is_email "$value"; then
         reason="expected an email like ops@example.com, or - for none"
@@ -157,9 +129,6 @@ prompt::validate() {
       elif [[ "$value" == *\'* && "$value" == *\"* ]]; then
         reason="use either single or double quotes: .env keeps the command as one quoted value"
       fi
-      ;;
-    ISSUE_CDN_ORIGIN_CERT)
-      [[ "$value" == true || "$value" == false ]] || reason="expected true or false"
       ;;
     REALITY_SNI)
       if [[ -n "$value" ]] && ! is::fqdn "$value"; then
@@ -234,7 +203,7 @@ prompt::_normalize() {
       ;;
   esac
   case "$key" in
-    *_DOMAIN | CERT_MODE | REALITY_SNI | REALITY_SHORT_ID | NODE_NAME) value="${value,,}" ;;
+    *_DOMAIN | REALITY_SNI | REALITY_SHORT_ID | NODE_NAME) value="${value,,}" ;;
   esac
   printf '%s' "$value"
 }
@@ -318,10 +287,6 @@ prompt::_ask() {
 # The fixed answers of KEY for a menu, "value|label" a line; returns 1 for a free answer.
 prompt::_options() {
   case "$1" in
-    CERT_MODE)
-      printf '%s\n' "dns-cloudflare|dns-cloudflare: the DNS zone is in Cloudflare" \
-        "http-01|http-01: port 80 is open"
-      ;;
     *) return 1 ;;
   esac
 }
@@ -335,15 +300,13 @@ prompt::_bytes() {
 # Prints the question for KEY and, after a |, its hint.
 prompt::_question() {
   case "$1" in
-    VLESS_DOMAIN) echo "Domain for direct VLESS connections|an A record to this server; - for none" ;;
+    VLESS_DOMAIN) echo "Domain of this server for origin nginx and direct VLESS|an A record to this server, port 80 open: Let's Encrypt checks it over HTTP" ;;
     HY2_DOMAIN) echo "Domain for Hysteria2 whose certificate this script issues|an A record to this server; - for none" ;;
     CDN_DOMAIN) echo "Domain of the CDN resource|a CNAME to the CDN" ;;
     ORIGIN_IP) echo "Public IPv4 of this server|the origin of the CDN resource" ;;
     XHTTP_PORT) echo "Local port of the xray xhttp inbound|" ;;
     XHTTP_PATH) echo "xhttp path|the same in the panel inbound and host" ;;
     NGINX_TLS_PORT) echo "Port where nginx accepts connections from the CDN edge|" ;;
-    CERT_MODE) echo "Certificate issuance|dns-cloudflare or http-01" ;;
-    CF_API_TOKEN) echo "Cloudflare API token with Zone:DNS:Edit|input hidden: paste it and press Enter" ;;
     LE_EMAIL) echo "Let's Encrypt contact email|- for none" ;;
     NODE_RELOAD_CMD) echo "Command that restarts the node after the Hysteria2 certificate renews|certbot runs it after each renewal; remnanode is the container from the panel" ;;
     REALITY_SNI) echo "Site that VLESS Reality impersonates|TLS 1.3, close to this server, open from Russia; - for no Reality" ;;
@@ -476,42 +439,15 @@ prompt::node() {
   prompt::_write_env
 }
 
-# Without a name in .env, the first label of VLESS_DOMAIN names the node, else the host.
+# Without a name in .env, the first label of VLESS_DOMAIN names the node.
 prompt::_ask_node_name() {
-  local name="${NODE_NAME:-}"
-  if [[ -z "$name" && -n "${VLESS_DOMAIN:-}" ]]; then
-    name="${VLESS_DOMAIN%%.*}"
-  elif [[ -z "$name" ]]; then
-    name="$(hostname -s 2>/dev/null || true)"
-  fi
+  local name="${NODE_NAME:-${VLESS_DOMAIN%%.*}}"
   prompt::_ask NODE_NAME "${name,,}"
-}
-
-# VLESS_DOMAIN may be skipped before CERT_MODE is known. When the answers leave origin
-# nginx without a certificate, it is asked again, now as a required value.
-prompt::_ask_origin_domain() {
-  if ! env::origin_cert_domain >/dev/null; then
-    log::warn "origin nginx needs a certificate: under http-01 or ISSUE_CDN_ORIGIN_CERT=false it comes from VLESS_DOMAIN, a domain of this server"
-    prompt::_ask VLESS_DOMAIN
-  fi
-}
-
-prompt::_ask_issue_cdn_cert() {
-  local default=y
-  if [[ "${ISSUE_CDN_ORIGIN_CERT:-}" == false ]]; then
-    default=n
-  fi
-  if confirm "Issue an origin certificate for $CDN_DOMAIN (ISSUE_CDN_ORIGIN_CERT)?" "$default"; then
-    ISSUE_CDN_ORIGIN_CERT=true
-  else
-    ISSUE_CDN_ORIGIN_CERT=false
-  fi
-  export ISSUE_CDN_ORIGIN_CERT
 }
 
 # --- .env -----------------------------------------------------------------------------
 
-# Writes .env with mode 600, since it holds CF_API_TOKEN.
+# Writes .env with mode 600: it holds the Reality private key and the SECRET_KEY of the node.
 prompt::_write_env() {
   local key
   for key in "${ENV_KEYS[@]}"; do

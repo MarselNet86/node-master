@@ -220,21 +220,29 @@ EOF
 }
 
 @test "env::load strips comments and CRLF line endings" {
-  printf '%s\r\n' 'XHTTP_PORT=4443   # local port' 'CERT_MODE="http-01"  # quoted' \
+  printf '%s\r\n' 'XHTTP_PORT=4443   # local port' 'XHTTP_PATH="/api/v3.jpg/"  # quoted' \
     'HY2_DOMAIN=# nothing yet' 'LE_EMAIL=ops#1@example.com' >"$TMP/env"
   env::load "$TMP/env"
   [ "$XHTTP_PORT" = 4443 ]
-  [ "$CERT_MODE" = http-01 ]
+  [ "$XHTTP_PATH" = /api/v3.jpg/ ]
   [ -z "$HY2_DOMAIN" ]
   [ "$LE_EMAIL" = 'ops#1@example.com' ]
 }
 
-@test "env::load skips a retired key quietly and still warns about an unknown one" {
-  printf '%s\n' 'UUID=3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f' 'FOO=bar' 'XHTTP_PORT=4450' >"$TMP/env"
+@test "env::load skips retired keys quietly and still warns about an unknown one" {
+  local key
+  printf '%s\n' 'UUID=3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f' 'FOO=bar' 'XHTTP_PORT=4450' \
+    'CERT_MODE=dns-cloudflare' 'CF_API_TOKEN=tok-7f3a9' 'ISSUE_CDN_ORIGIN_CERT=true' >"$TMP/env"
+  chmod 600 "$TMP/env"
   env::load "$TMP/env" 2>"$TMP/err"
-  [ -z "${UUID:-}" ]
+  for key in UUID CERT_MODE CF_API_TOKEN ISSUE_CDN_ORIGIN_CERT; do
+    [ -z "${!key:-}" ] || {
+      echo "$key was loaded"
+      return 1
+    }
+    [[ "$(<"$TMP/err")" != *"$key"* ]]
+  done
   [ "$XHTTP_PORT" = 4450 ]
-  [[ "$(<"$TMP/err")" != *UUID* ]]
   [[ "$(<"$TMP/err")" == *"unknown key FOO ignored"* ]]
 }
 
@@ -277,7 +285,7 @@ EOF
   printf 'NODE_RELOAD_CMD="docker restart\n' >"$TMP/env"
   run env::load "$TMP/env"
   [ "$status" -eq 2 ]
-  printf "CF_API_TOKEN='tok-7f3a9' tail\n" >"$TMP/env"
+  printf "NODE_SECRET_KEY='tok-7f3a9' tail\n" >"$TMP/env"
   run env::load "$TMP/env"
   [ "$status" -eq 2 ]
   [[ "$output" != *tok-7f3a9* ]]
@@ -289,7 +297,7 @@ EOF
 }
 
 @test "env::load warns about a readable file with secrets and never prints them" {
-  printf 'CF_API_TOKEN=tok-7f3a9\n' >"$TMP/env"
+  printf 'NODE_SECRET_KEY=tok-7f3a9\n' >"$TMP/env"
   chmod 644 "$TMP/env"
   run env::load "$TMP/env"
   [ "$status" -eq 0 ]
@@ -421,12 +429,10 @@ EOF
   [ "$XHTTP_PORT" = 4443 ]
   [ "$XHTTP_PATH" = /api/v2.jpg/ ]
   [ "$NGINX_TLS_PORT" = 8444 ]
-  [ "$CERT_MODE" = dns-cloudflare ]
   [ "$NODE_RELOAD_CMD" = "docker restart remnanode" ]
-  [ "$ISSUE_CDN_ORIGIN_CERT" = true ]
   [ "$REALITY_SNI" = www.swiss.com ]
   [ "$NODE_PORT" = 2222 ]
-  for key in VLESS_DOMAIN HY2_DOMAIN CDN_DOMAIN ORIGIN_IP CF_API_TOKEN LE_EMAIL \
+  for key in VLESS_DOMAIN HY2_DOMAIN CDN_DOMAIN ORIGIN_IP LE_EMAIL \
     REALITY_PRIVATE_KEY REALITY_SHORT_ID NODE_NAME NODE_SECRET_KEY; do
     [ -z "${!key}" ] || {
       echo "$key must have no default"
@@ -518,18 +524,4 @@ STUB
   [ -z "$SYSROOT" ]
   run env CDN_DEPLOY_SYSROOT=/scratch bash -c "source \"$lib\" && printf %s \"\$SYSROOT\""
   [ "$output" = /scratch ]
-}
-
-@test "env::cdn_has_cert holds only under dns-cloudflare with ISSUE_CDN_ORIGIN_CERT=true" {
-  CERT_MODE=dns-cloudflare
-  ISSUE_CDN_ORIGIN_CERT=true
-  run env::cdn_has_cert
-  [ "$status" -eq 0 ]
-  ISSUE_CDN_ORIGIN_CERT=false
-  run env::cdn_has_cert
-  [ "$status" -eq 1 ]
-  CERT_MODE=http-01
-  ISSUE_CDN_ORIGIN_CERT=true
-  run env::cdn_has_cert
-  [ "$status" -eq 1 ]
 }

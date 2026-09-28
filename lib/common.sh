@@ -205,42 +205,18 @@ is::port() {
 # Contract keys (tech.md §4) in prompt order. env::load accepts no others.
 readonly -a ENV_KEYS=(
   VLESS_DOMAIN HY2_DOMAIN CDN_DOMAIN ORIGIN_IP XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT
-  CERT_MODE CF_API_TOKEN LE_EMAIL NODE_RELOAD_CMD ISSUE_CDN_ORIGIN_CERT
-  REALITY_SNI REALITY_PRIVATE_KEY REALITY_SHORT_ID NODE_NAME NODE_PORT NODE_SECRET_KEY
+  LE_EMAIL NODE_RELOAD_CMD REALITY_SNI REALITY_PRIVATE_KEY REALITY_SHORT_ID
+  NODE_NAME NODE_PORT NODE_SECRET_KEY
 )
 # Keys an older .env holds that nothing reads anymore. env::load skips them without a
 # warning, and the next write of .env drops them. UUID was a VLESS client id: the panel
-# creates the clients, each with an id of its own.
-readonly -a ENV_RETIRED_KEYS=(UUID)
-# Values that grant access to the DNS zone or the node: never print them.
-readonly -a ENV_SECRET_KEYS=(CF_API_TOKEN REALITY_PRIVATE_KEY NODE_SECRET_KEY)
+# creates the clients, each with an id of its own. CERT_MODE, CF_API_TOKEN and
+# ISSUE_CDN_ORIGIN_CERT chose DNS-01 through Cloudflare: HTTP-01 is the only way now.
+readonly -a ENV_RETIRED_KEYS=(UUID CERT_MODE CF_API_TOKEN ISSUE_CDN_ORIGIN_CERT)
+# Values that grant access to the node: never print them.
+readonly -a ENV_SECRET_KEYS=(REALITY_PRIVATE_KEY NODE_SECRET_KEY)
 
 env::is_secret() { env::_contains "$1" "${ENV_SECRET_KEYS[@]}"; }
-
-# CDN_DOMAIN gets its own origin certificate only under dns-cloudflare with
-# ISSUE_CDN_ORIGIN_CERT=true: http-01 cannot validate a CNAME to the CDN.
-env::cdn_has_cert() {
-  [[ "${CERT_MODE:-}" == dns-cloudflare && "${ISSUE_CDN_ORIGIN_CERT:-true}" == true ]]
-}
-
-# Prints the domain whose certificate origin nginx serves: CDN_DOMAIN per
-# env::cdn_has_cert, else VLESS_DOMAIN, a name of this server. Returns 1 when neither
-# applies: a CDN-only setup under http-01 still needs a domain of this server.
-env::origin_cert_domain() {
-  if env::cdn_has_cert; then
-    printf '%s' "${CDN_DOMAIN:-}"
-  elif [[ -n "${VLESS_DOMAIN:-}" ]]; then
-    printf '%s' "$VLESS_DOMAIN"
-  else
-    return 1
-  fi
-}
-
-# Exits 2 when origin nginx would have no certificate to serve.
-env::require_origin_cert() {
-  env::origin_cert_domain >/dev/null ||
-    log::die "$EXIT_INPUT" "origin nginx needs a certificate: set VLESS_DOMAIN to a domain of this server, or use CERT_MODE=dns-cloudflare with ISSUE_CDN_ORIGIN_CERT=true. Rerun ./deploy.sh"
-}
 
 # Loads KEY=VALUE lines into exported variables (envsubst reads the environment)
 # without executing the file. Values are literal: one pair of matching quotes is

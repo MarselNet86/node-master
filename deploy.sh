@@ -25,7 +25,7 @@ trap 'log::error "unexpected failure (exit $?) at ${BASH_SOURCE[0]##*/}:$LINENO:
 
 # System packages the stack runs on (tech.md §2). procps brings sysctl: minimal Debian
 # images lack it.
-readonly -a PACKAGES=(nginx certbot python3-certbot-dns-cloudflare curl jq openssl coreutils
+readonly -a PACKAGES=(nginx certbot curl jq openssl coreutils
   gettext-base procps)
 
 # Steps in execution order: "<id> <function> [<module function it needs>]".
@@ -76,11 +76,7 @@ deploy::preflight() {
 deploy::load_config() {
   env::load "$ENV_EXAMPLE"
   env::load "$ENV_FILE"
-  env::require CDN_DOMAIN ORIGIN_IP NODE_NAME
-  if [[ "${CERT_MODE:-}" == dns-cloudflare ]]; then
-    env::require CF_API_TOKEN
-  fi
-  env::require_origin_cert
+  env::require VLESS_DOMAIN CDN_DOMAIN ORIGIN_IP NODE_NAME
 }
 
 deploy::packages() { pkg::install "${PACKAGES[@]}"; }
@@ -123,7 +119,7 @@ deploy::plan() {
   else
     settings_from="no .env yet: .env.example defaults, step 2 asks for every value"
   fi
-  deploy::advise env::require_origin_cert
+  deploy::advise env::require VLESS_DOMAIN
   printf 'cdn-deploy dry run: nothing is changed.\n\nSettings (%s):\n' "$settings_from"
   for key in "${ENV_KEYS[@]}"; do
     printf '  %-22s %s\n' "$key" "$(deploy::show "$key" '<unset>')"
@@ -153,17 +149,16 @@ deploy::describe() {
         "$xhttp_port" "$tls_port"
       ;;
     certs)
-      printf "Let's Encrypt via %s: %s; skip certificates valid 30+ days" \
-        "$(deploy::show CERT_MODE)" "$(deploy::cert_domains)"
+      printf "Let's Encrypt via HTTP-01 on :80: %s; skip certificates valid 30+ days" \
+        "$(deploy::cert_domains)"
       ;;
     renew-hook)
-      printf 'certbot deploy hook: nginx reload%s%s; certbot.timer on' \
-        "$(deploy::node_reload_plan)" \
-        "$([[ "${CERT_MODE:-}" == http-01 ]] && printf '; pre/post hooks open :80 for HTTP-01')"
+      printf 'certbot deploy hook: nginx reload%s; pre/post hooks open :80 for HTTP-01; certbot.timer on' \
+        "$(deploy::node_reload_plan)"
       ;;
     nginx)
       printf 'templates/ into /etc/nginx/: :%s %s (certificate of %s) -> 127.0.0.1:%s; drop %s; nginx -t; reload' \
-        "$tls_port" "$cdn" "$(deploy::origin_cert_domain)" "$xhttp_port" "sites-enabled/default"
+        "$tls_port" "$cdn" "$(deploy::show VLESS_DOMAIN)" "$xhttp_port" "sites-enabled/default"
       ;;
     remnawave)
       printf 'render out/remnawave/: config profile, host extra, Xray JSON template, xhttp inbound; walk through the panel (the profile, then the node with it) and the CDN resource; start the node from %s with its SECRET_KEY%s, installing Docker when it is missing' \
@@ -176,35 +171,12 @@ deploy::describe() {
   esac
 }
 
-# Empty VLESS_DOMAIN and HY2_DOMAIN mean a server that already runs them: no certificate.
+# VLESS_DOMAIN, whose certificate origin nginx serves, and HY2_DOMAIN when it is set: an
+# empty one means a server that already runs Hysteria2 with a certificate of its own.
 deploy::cert_domains() {
-  local domains=()
-  if [[ -n "${VLESS_DOMAIN:-}" ]]; then
-    domains+=("$VLESS_DOMAIN")
-  fi
+  printf '%s' "$(deploy::show VLESS_DOMAIN)"
   if [[ -n "${HY2_DOMAIN:-}" && "$HY2_DOMAIN" != "${VLESS_DOMAIN:-}" ]]; then
-    domains+=("$HY2_DOMAIN")
-  fi
-  if env::cdn_has_cert; then
-    domains+=("$(deploy::show CDN_DOMAIN)")
-  fi
-  if ((${#domains[@]} == 0)); then
-    domains=("<VLESS_DOMAIN>")
-  fi
-  printf '%s' "${domains[*]}"
-  if ! env::cdn_has_cert; then
-    printf ' (origin :%s serves the VLESS_DOMAIN certificate)' "$(deploy::show NGINX_TLS_PORT)"
-  fi
-}
-
-deploy::origin_cert_domain() {
-  local domain
-  if domain="$(env::origin_cert_domain)" && [[ -n "$domain" ]]; then
-    printf '%s' "$domain"
-  elif env::cdn_has_cert; then
-    printf '<CDN_DOMAIN>'
-  else
-    printf '<VLESS_DOMAIN>'
+    printf ' %s' "$HY2_DOMAIN"
   fi
 }
 
