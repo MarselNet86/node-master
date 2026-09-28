@@ -88,6 +88,7 @@ deploy::packages() { pkg::install "${PACKAGES[@]}"; }
 
 deploy::run() {
   local entry id fn needs n=0
+  prompt::language ask
   for entry in "${STEPS[@]}"; do
     read -r id fn needs <<<"$entry"
     n=$((n + 1))
@@ -102,6 +103,7 @@ deploy::run() {
 # --- dry run ----------------------------------------------------------------------------
 
 deploy::dry_run() {
+  prompt::language
   deploy::advise require::root
   deploy::advise require::distro /etc/os-release
   deploy::plan

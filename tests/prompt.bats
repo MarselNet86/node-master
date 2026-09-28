@@ -438,6 +438,8 @@ EOF
   valid NODE_RELOAD_CMD "docker restart remnawave-node" "sh -c 'docker restart x'" \
     'docker compose -f "/a b/c.yml" restart'
   invalid NODE_RELOAD_CMD "" "a 'b' \"c\""
+  valid UI_LANG "" en ru
+  invalid UI_LANG de EN russian
 }
 
 @test "prompt::validate: the Reality site, key and short id" {

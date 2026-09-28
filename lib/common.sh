@@ -62,6 +62,7 @@ ui::init
 # --- language ---------------------------------------------------------------------------
 # Messages are English printf formats. With I18N_LANG=ru, t prints the Russian format from
 # lib/i18n-ru.sh instead, keyed by the English one; a format without one stays English.
+# deploy.sh sets I18N_LANG from the language menu, UI_LANG in .env or the locale.
 
 I18N_LANG="${I18N_LANG:-en}"
 # shellcheck source=i18n-ru.sh
@@ -223,7 +224,7 @@ is::port() {
 
 # Contract keys (tech.md §4) in prompt order. env::load accepts no others.
 readonly -a ENV_KEYS=(
-  VLESS_DOMAIN HY2_DOMAIN CDN_DOMAIN ORIGIN_IP XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT
+  UI_LANG VLESS_DOMAIN HY2_DOMAIN CDN_DOMAIN ORIGIN_IP XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT
   LE_EMAIL NODE_RELOAD_CMD REALITY_SNI REALITY_PRIVATE_KEY REALITY_SHORT_ID
   NODE_NAME NODE_PORT NODE_SECRET_KEY
 )

@@ -87,6 +87,8 @@ declare -gA I18N_RU=(
   ["new random"]="новый случайный"
   ["%s holds both ' and \": .env cannot keep it, fix it in %s"]="в %s есть и ', и \": .env такое не сохранит, исправьте в %s"
   ["from docker-compose.yml"]="из docker-compose.yml"
+  # language
+  ["expected en or ru"]="нужно en или ru"
   # deploy.sh
   ["unexpected failure (exit %s) at %s:%s: %s"]="непредвиденный сбой (код %s) в %s:%s: %s"
   ["OS: %s %s"]="ОС: %s %s"

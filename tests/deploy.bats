@@ -158,6 +158,18 @@ EOF
   [ ! -e "$TMP/calls" ]
 }
 
+@test "a run without root over the .env of a root run still says it needs root" {
+  ((EUID != 0)) || skip "root reads any file"
+  printf 'UI_LANG=ru\nVLESS_DOMAIN=vless.example.com\n' >"$REPO/.env"
+  chmod 000 "$REPO/.env"
+  deploy
+  [ "$status" -eq 4 ]
+  [[ "$(cat "$TMP/stderr")" == *"root privileges required: rerun with sudo"* ]]
+  deploy --dry-run
+  [ "$status" -eq 2 ]
+  [[ "$(cat "$TMP/stderr")" == *"cannot read $REPO/.env"* ]]
+}
+
 @test "the packages step installs every command a module requires, beyond the base system" {
   local cmd pkg plan missing=""
   local -A from=([sysctl]=procps [systemctl]=base [certbot]=certbot [openssl]=openssl

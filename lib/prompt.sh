@@ -35,7 +35,59 @@ prompt::collect() {
     esac
   done
   UI_NUMBER=""
+  # The language picked before the survey, not the one .env held.
+  export UI_LANG="$I18N_LANG"
   prompt::_write_env
+}
+
+# The language of the run, as I18N_LANG and UI_LANG. UI_LANG of .env gives the default,
+# else the locale; with "ask" a terminal gets the question first thing, as a menu when it
+# can show one.
+prompt::language() {
+  local lang="" answer
+  # The parser of step 2 in a subshell that lets out UI_LANG only. A .env that needs root
+  # to read or is broken leaves the language to the locale: the root check and step 2 say
+  # what is wrong with it.
+  if [[ -f "$ENV_FILE" && -r "$ENV_FILE" ]]; then
+    lang="$({ env::load "$ENV_FILE" && printf '%s' "${UI_LANG:-}"; } 2>/dev/null)" || lang=""
+  fi
+  if [[ "$lang" != en && "$lang" != ru ]]; then
+    case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+      ru*) lang=ru ;;
+      *) lang=en ;;
+    esac
+  fi
+  if [[ "${1-}" == ask ]] && ui::menus; then
+    ui::question "Language / Язык" "$UI_KEYS"
+    lang="$(ui::menu "$lang" "en|English" "ru|Русский")"
+    ui::field "" ""
+    if [[ "$lang" == ru ]]; then
+      printf '%s\n' "Русский" >&2
+    else
+      printf '%s\n' "English" >&2
+    fi
+  elif [[ "${1-}" == ask && -t 0 ]]; then
+    # NO_COLOR or TERM=dumb: the answer is typed.
+    ui::question "Language / Язык" "en, ru"
+    while true; do
+      ui::field UI_LANG "$lang"
+      if ! IFS= read -r answer && [[ -z "$answer" ]]; then
+        printf '\n' >&2
+        break
+      fi
+      answer="${answer//[[:space:]]/}"
+      case "${answer,,}" in
+        "") break ;;
+        en | ru)
+          lang="${answer,,}"
+          break
+          ;;
+      esac
+      ui::rejected UI_LANG "type en or ru / введите en или ru"
+    done
+  fi
+  I18N_LANG="$lang"
+  export UI_LANG="$lang"
 }
 
 # Whether KEY gets a question under the answers so far. A question that hangs on the
@@ -45,6 +97,8 @@ prompt::_asks() {
   case "$key" in
     # Panel step 2 asks for them: the panel creates the node from the rendered profile.
     NODE_PORT | NODE_SECRET_KEY) return 1 ;;
+    # prompt::language asks for it before the survey.
+    UI_LANG) return 1 ;;
     NODE_RELOAD_CMD) by=HY2_DOMAIN ;;
     REALITY_PRIVATE_KEY | REALITY_SHORT_ID) by=REALITY_SNI ;;
     *) return 0 ;;
@@ -156,6 +210,9 @@ prompt::validate() {
       ;;
     NODE_SECRET_KEY)
       reason="$(prompt::_node_key_problem "$value")"
+      ;;
+    UI_LANG)
+      [[ -z "$value" || "$value" == en || "$value" == ru ]] || reason="$(t 'expected en or ru')"
       ;;
     *) reason="$(t '%s is not in the .env contract' "$key")" ;;
   esac
