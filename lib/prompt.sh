@@ -250,7 +250,8 @@ prompt::_is_email() {
 # Once stdin runs out, an acceptable default is taken and anything else is an error,
 # so deploy.sh runs without a terminal when .env is complete.
 prompt::_ask() {
-  local key="$1" default label="${3-}" answer value reason eof cut hidden=0 text
+  local key="$1" default label="${3-}" answer value reason eof cut hidden=0 text options
+  local -a choices
   if (($# >= 2)); then
     default="$2"
   else
@@ -266,6 +267,16 @@ prompt::_ask() {
     hidden=1
   fi
   text="$(prompt::_question "$key")"
+  if ui::menus && options="$(prompt::_options "$key")"; then
+    ui::question "${text%%|*}" "$UI_KEYS"
+    mapfile -t choices <<<"$options"
+    value="$(ui::menu "$default" "${choices[@]}")"
+    ui::field "$key" ""
+    printf '%s\n' "$value" >&2
+    printf -v "$key" '%s' "$value"
+    export "${key?}"
+    return 0
+  fi
   ui::question "${text%%|*}" "${text#*|}"
   while true; do
     ui::field "$key" "$label"
@@ -302,6 +313,17 @@ prompt::_ask() {
     fi
     ui::rejected "$key" "$reason"
   done
+}
+
+# The fixed answers of KEY for a menu, "value|label" a line; returns 1 for a free answer.
+prompt::_options() {
+  case "$1" in
+    CERT_MODE)
+      printf '%s\n' "dns-cloudflare|dns-cloudflare: the DNS zone is in Cloudflare" \
+        "http-01|http-01: port 80 is open"
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 # The length of S in bytes.

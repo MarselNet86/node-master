@@ -363,6 +363,44 @@ EOF
   [ "$output" = "***" ]
 }
 
+# Runs SCRIPT on a terminal with KEYS typed after a second; the output lands in $TMP/out.
+on_terminal() {
+  local script="$1" keys="$2"
+  {
+    sleep 1
+    printf '%b' "$keys"
+    sleep 1
+  } | TERM=xterm timeout 20 script -qec "bash $script" /dev/null >"$TMP/out" 2>&1 || true
+}
+
+@test "on a terminal a menu moves with the arrow keys, j and k or a digit, and Enter takes it" {
+  script --version >/dev/null 2>&1 || skip "needs script from util-linux for a terminal"
+  printf 'source %q\n' "$BATS_TEST_DIRNAME/../lib/common.sh" >"$TMP/menu.sh"
+  cat >>"$TMP/menu.sh" <<'EOF'
+for i in 1 2 3 4; do
+  echo "picked=$(ui::menu b "a|Alpha" "b|Beta" "c|Gamma")"
+done
+EOF
+  # Down from Beta, up from Beta, j twice around the end, the digit 3.
+  on_terminal "$TMP/menu.sh" '\e[B\n\e[A\njj\n3\n'
+  [ "$(grep -o 'picked=[abc]' "$TMP/out" | tr '\n' ' ')" = "picked=c picked=a picked=a picked=c " ]
+  grep -q 'Gamma' "$TMP/out"
+}
+
+@test "on a terminal confirm is a Yes/No menu with the default marked" {
+  script --version >/dev/null 2>&1 || skip "needs script from util-linux for a terminal"
+  printf 'source %q\n' "$BATS_TEST_DIRNAME/../lib/common.sh" >"$TMP/confirm.sh"
+  cat >>"$TMP/confirm.sh" <<'EOF'
+confirm "Proceed?" y && echo first=yes || echo first=no
+confirm "Proceed?" y && echo second=yes || echo second=no
+confirm "Proceed?" && echo third=yes || echo third=no
+EOF
+  on_terminal "$TMP/confirm.sh" '\n\e[B\n\n'
+  grep -q 'first=yes' "$TMP/out"
+  grep -q 'second=no' "$TMP/out"
+  grep -q 'third=no' "$TMP/out"
+}
+
 @test "on a terminal confirm asks in the layout of a form and refuses in red" {
   ui::enable
   run confirm "Proceed?" y <<<$'maybe\n'

@@ -558,6 +558,23 @@ EOF
   [ "$output" = 5002 ]
 }
 
+@test "on a terminal CERT_MODE is picked from a menu" {
+  script --version >/dev/null 2>&1 || skip "needs script from util-linux for a terminal"
+  printf 'source %q\n' "$REPO/lib/prompt.sh" >"$TMP/mode.sh"
+  cat >>"$TMP/mode.sh" <<'EOF'
+env::load "$ENV_EXAMPLE"
+prompt::_ask CERT_MODE
+echo "CERT_MODE=$CERT_MODE"
+EOF
+  {
+    sleep 1
+    printf '\e[B\n'
+    sleep 1
+  } | TERM=xterm timeout 20 script -qec "bash $TMP/mode.sh" /dev/null >"$TMP/out" 2>&1 || true
+  grep -q 'http-01: port 80 is open' "$TMP/out"
+  grep -q 'CERT_MODE=http-01' "$TMP/out"
+}
+
 @test "prompt::validate: NODE_PORT stays off 443 and the ports of xray and nginx" {
   XHTTP_PORT=4443
   NGINX_TLS_PORT=8444

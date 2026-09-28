@@ -39,7 +39,7 @@ readonly REPO_ROOT ENV_FILE="$REPO_ROOT/.env" ENV_EXAMPLE="$REPO_ROOT/.env.examp
 ui::init() {
   UI_STYLE=0 UI_NUMBER=""
   UI_RESET="" UI_BOLD="" UI_DIM="" UI_RED="" UI_GREEN="" UI_YELLOW="" UI_CYAN=""
-  UI_ARROW=">" UI_CROSS="x" UI_DOT="*"
+  UI_ARROW=">" UI_CROSS="x" UI_DOT="*" UI_KEYS="up, down, Enter"
   if [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then
     ui::enable
   fi
@@ -51,9 +51,9 @@ ui::enable() {
   UI_RESET=$'\e[0m' UI_BOLD=$'\e[1m' UI_DIM=$'\e[2m' UI_RED=$'\e[31m' UI_GREEN=$'\e[32m'
   UI_YELLOW=$'\e[33m' UI_CYAN=$'\e[36m'
   if [[ "${TERM:-}" == linux ]]; then
-    UI_ARROW=">" UI_CROSS="x" UI_DOT="*"
+    UI_ARROW=">" UI_CROSS="x" UI_DOT="*" UI_KEYS="up, down, Enter"
   else
-    UI_ARROW="›" UI_CROSS="✗" UI_DOT="•"
+    UI_ARROW="›" UI_CROSS="✗" UI_DOT="•" UI_KEYS="↑ ↓, Enter"
   fi
 }
 
@@ -358,6 +358,70 @@ ui::hidden() {
   printf '\n' >&2
 }
 
+# Whether a question with fixed answers takes a menu: a styled terminal that also types
+# the answers. Elsewhere the answer is typed, as a pipe or a test gives it.
+ui::menus() {
+  ((UI_STYLE)) && [[ -t 0 ]]
+}
+
+# A menu under the question: the arrow keys, j and k or a digit move the mark, Enter takes
+# the option. OPTIONS are "value|label", DEFAULT has the mark first. Prints the value; the
+# menu gives way to the field line of the caller. Keep labels short: a label that wraps
+# throws the redraw off.
+ui::menu() {
+  local default="$1" option key rest i n sel=0
+  shift
+  local -a values=() labels=()
+  for option in "$@"; do
+    values+=("${option%%|*}")
+    labels+=("${option#*|}")
+  done
+  n=${#values[@]}
+  for ((i = 0; i < n; i++)); do
+    if [[ "${values[i]}" == "$default" ]]; then
+      sel=$i
+    fi
+  done
+  ui::_menu_lines "$sel" "${labels[@]}"
+  while IFS= read -rsn1 key; do
+    case "$key" in
+      "") break ;;
+      $'\e')
+        rest=""
+        IFS= read -rsn2 -t 0.1 rest || true
+        case "$rest" in
+          "[A" | OA) sel=$(((sel + n - 1) % n)) ;;
+          "[B" | OB) sel=$(((sel + 1) % n)) ;;
+        esac
+        ;;
+      k) sel=$(((sel + n - 1) % n)) ;;
+      j) sel=$(((sel + 1) % n)) ;;
+      [1-9])
+        if ((key <= n)); then
+          sel=$((key - 1))
+        fi
+        ;;
+    esac
+    printf '\e[%dA' "$n" >&2
+    ui::_menu_lines "$sel" "${labels[@]}"
+  done
+  printf '\e[%dA\e[J' "$n" >&2
+  printf '%s' "${values[sel]}"
+}
+
+ui::_menu_lines() {
+  local sel="$1" label i=0
+  shift
+  for label in "$@"; do
+    if ((i == sel)); then
+      printf '\r\e[2K       %s%s %s%s\n' "$UI_BOLD$UI_CYAN" "$UI_ARROW" "$label" "$UI_RESET" >&2
+    else
+      printf '\r\e[2K         %s%s%s\n' "$UI_DIM" "$label" "$UI_RESET" >&2
+    fi
+    i=$((i + 1))
+  done
+}
+
 # Says why the answer for KEY (none for a yes/no question) is refused.
 ui::rejected() {
   local key="$1" reason="$2"
@@ -369,12 +433,27 @@ ui::rejected() {
 }
 
 # Asks a yes/no question on stderr and reads the answer from stdin. An empty answer or
-# EOF takes the default: no, unless the second argument is y.
+# EOF takes the default: no, unless the second argument is y. A terminal gets a menu.
 confirm() {
   local prompt="$1" answer default_rc=1 hint='y/N'
   if [[ "${2:-n}" == y ]]; then
     default_rc=0
     hint='Y/n'
+  fi
+  if ui::menus; then
+    answer=n
+    if ((default_rc == 0)); then
+      answer=y
+    fi
+    ui::question "$prompt" "$UI_KEYS"
+    answer="$(ui::menu "$answer" "y|Yes" "n|No")"
+    ui::field "" ""
+    if [[ "$answer" == y ]]; then
+      printf '%s\n' Yes >&2
+      return 0
+    fi
+    printf '%s\n' No >&2
+    return 1
   fi
   if ((UI_STYLE)); then
     ui::question "$prompt"
