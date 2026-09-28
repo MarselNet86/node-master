@@ -20,8 +20,13 @@ source "$REPO_ROOT/lib/remnawave.sh"
 # shellcheck source=lib/validate.sh
 source "$REPO_ROOT/lib/validate.sh"
 
-# set -e alone exits without a word; name the command that failed.
-trap 'log::error "unexpected failure (exit $?) at ${BASH_SOURCE[0]##*/}:$LINENO: $BASH_COMMAND"' ERR
+# set -e alone exits without a word; name the command that failed. The trap expands the
+# values where the failure happened.
+trap 'deploy::failed "$?" "${BASH_SOURCE[0]##*/}" "$LINENO" "$BASH_COMMAND"' ERR
+
+deploy::failed() {
+  log::error "$(t 'unexpected failure (exit %s) at %s:%s: %s' "$@")"
+}
 
 # System packages the stack runs on (tech.md §2). procps brings sysctl: minimal Debian
 # images lack it.
@@ -66,9 +71,9 @@ EOF
 deploy::preflight() {
   require::root
   require::distro /etc/os-release
-  log::info "OS: $OS_ID $OS_VERSION_ID"
+  log::info "$(t 'OS: %s %s' "$OS_ID" "$OS_VERSION_ID")"
   if [[ -n "$SYSROOT" ]]; then
-    log::warn "CDN_DEPLOY_SYSROOT=$SYSROOT: system files go under it, meant for tests only"
+    log::warn "$(t 'CDN_DEPLOY_SYSROOT=%s: system files go under it, meant for tests only' "$SYSROOT")"
   fi
 }
 
@@ -87,11 +92,11 @@ deploy::run() {
     read -r id fn needs <<<"$entry"
     n=$((n + 1))
     declare -F "${needs:-$fn}" >/dev/null ||
-      log::die "$EXIT_FAILURE" "step $id: ${needs:-$fn} is not implemented yet"
+      log::die "$EXIT_FAILURE" "$(t 'step %s: %s is not implemented yet' "$id" "${needs:-$fn}")"
     log::step "$n/${#STEPS[@]}" "$id"
     "$fn"
   done
-  log::info "deploy finished"
+  log::info "$(t 'deploy finished')"
 }
 
 # --- dry run ----------------------------------------------------------------------------
@@ -106,7 +111,7 @@ deploy::dry_run() {
 deploy::advise() {
   local err
   if ! err="$("$@" 2>&1)"; then
-    log::warn "dry run goes on, a real run stops here: ${err#\[ERROR\] }"
+    log::warn "$(t 'dry run goes on, a real run stops here: %s' "${err#\[ERROR\] }")"
   fi
 }
 
@@ -117,19 +122,19 @@ deploy::plan() {
   if [[ -f "$ENV_FILE" ]]; then
     env::load "$ENV_FILE"
   else
-    settings_from="no .env yet: .env.example defaults, step 2 asks for every value"
+    settings_from="$(t 'no .env yet: .env.example defaults, step 2 asks for every value')"
   fi
   deploy::advise env::require VLESS_DOMAIN
-  printf 'cdn-deploy dry run: nothing is changed.\n\nSettings (%s):\n' "$settings_from"
+  t 'cdn-deploy dry run: nothing is changed.\n\nSettings (%s):\n' "$settings_from"
   for key in "${ENV_KEYS[@]}"; do
-    printf '  %-22s %s\n' "$key" "$(deploy::show "$key" '<unset>')"
+    printf '  %-22s %s\n' "$key" "$(deploy::show "$key" "$(t '<unset>')")"
   done
-  printf '\nSteps:\n'
+  t '\nSteps:\n'
   for entry in "${STEPS[@]}"; do
     read -r id fn needs <<<"$entry"
     n=$((n + 1))
     mark=""
-    declare -F "${needs:-$fn}" >/dev/null || mark=" [not implemented yet]"
+    declare -F "${needs:-$fn}" >/dev/null || mark=" $(t '[not implemented yet]')"
     printf '  %2d. %-10s %s%s\n' "$n" "$id" "$(deploy::describe "$id")" "$mark"
   done
 }
@@ -140,32 +145,32 @@ deploy::describe() {
   xhttp_port="$(deploy::show XHTTP_PORT)"
   cdn="$(deploy::show CDN_DOMAIN)"
   case "$1" in
-    preflight) printf 'check root, bash 4+, OS: Ubuntu 22.04/24.04/26.04 or Debian 12' ;;
-    input) printf 'ask for settings (defaults from an existing .env), write .env (mode 600)' ;;
-    config) printf 'load .env over the .env.example defaults, check required settings' ;;
-    packages) printf 'install missing: %s' "${PACKAGES[*]}" ;;
+    preflight) t 'check root, bash 4+, OS: Ubuntu 22.04/24.04/26.04 or Debian 12' ;;
+    input) t 'ask for settings (defaults from an existing .env), write .env (mode 600)' ;;
+    config) t 'load .env over the .env.example defaults, check required settings' ;;
+    packages) t 'install missing: %s' "${PACKAGES[*]}" ;;
     sysctl)
-      printf '/etc/sysctl.d/99-cdn.conf, reserve ports %s,%s, apply and check; nofile 65535 for nginx and logins' \
+      t '/etc/sysctl.d/99-cdn.conf, reserve ports %s,%s, apply and check; nofile 65535 for nginx and logins' \
         "$xhttp_port" "$tls_port"
       ;;
     certs)
-      printf "Let's Encrypt via HTTP-01 on :80: %s; skip certificates valid 30+ days" \
+      t "Let's Encrypt via HTTP-01 on :80: %s; skip certificates valid 30+ days" \
         "$(deploy::cert_domains)"
       ;;
     renew-hook)
-      printf 'certbot deploy hook: nginx reload%s; pre/post hooks open :80 for HTTP-01; certbot.timer on' \
+      t 'certbot deploy hook: nginx reload%s; pre/post hooks open :80 for HTTP-01; certbot.timer on' \
         "$(deploy::node_reload_plan)"
       ;;
     nginx)
-      printf 'templates/ into /etc/nginx/: :%s %s (certificate of %s) -> 127.0.0.1:%s; drop %s; nginx -t; reload' \
+      t 'templates/ into /etc/nginx/: :%s %s (certificate of %s) -> 127.0.0.1:%s; drop %s; nginx -t; reload' \
         "$tls_port" "$cdn" "$(deploy::show VLESS_DOMAIN)" "$xhttp_port" "sites-enabled/default"
       ;;
     remnawave)
-      printf 'render out/remnawave/: config profile, host extra, Xray JSON template, xhttp inbound; walk through the panel (the profile, then the node with it) and the CDN resource; start the node from %s with its SECRET_KEY%s, installing Docker when it is missing' \
-        "$NODE_COMPOSE" "$([[ -n "${HY2_DOMAIN:-}" ]] && printf ' and /etc/letsencrypt mounted for Hysteria2')"
+      t 'render out/remnawave/: config profile, host extra, Xray JSON template, xhttp inbound; walk through the panel (the profile, then the node with it) and the CDN resource; start the node from %s with its SECRET_KEY%s, installing Docker when it is missing' \
+        "$NODE_COMPOSE" "$([[ -n "${HY2_DOMAIN:-}" ]] && t ' and /etc/letsencrypt mounted for Hysteria2')"
       ;;
     validate)
-      printf 'layers: xray 127.0.0.1:%s; origin :%s /cdn-check 204; %stest 400 with padding; CDN %s /cdn-check 204' \
+      t 'layers: xray 127.0.0.1:%s; origin :%s /cdn-check 204; %stest 400 with padding; CDN %s /cdn-check 204' \
         "$xhttp_port" "$tls_port" "$(deploy::show XHTTP_PATH)" "$cdn"
       ;;
   esac
@@ -182,9 +187,9 @@ deploy::cert_domains() {
 
 deploy::node_reload_plan() {
   if [[ -n "${HY2_DOMAIN:-}" ]]; then
-    printf ', "%s" when %s renews' "$(deploy::show NODE_RELOAD_CMD)" "$HY2_DOMAIN"
+    t ', "%s" when %s renews' "$(deploy::show NODE_RELOAD_CMD)" "$HY2_DOMAIN"
   else
-    printf ', no node restart: HY2_DOMAIN is not set'
+    t ', no node restart: HY2_DOMAIN is not set'
   fi
 }
 
@@ -195,7 +200,7 @@ deploy::show() {
   if [[ -z "${!key:-}" ]]; then
     printf '%s' "${2:-<$key>}"
   elif env::is_secret "$key"; then
-    printf '<hidden>'
+    t '<hidden>'
   else
     printf '%s' "${!key}"
   fi
@@ -212,7 +217,7 @@ deploy::main() {
         deploy::usage
         return 0
         ;;
-      *) log::die "$EXIT_INPUT" "unknown option: $arg. See ./deploy.sh --help" ;;
+      *) log::die "$EXIT_INPUT" "$(t 'unknown option: %s. See ./deploy.sh --help' "$arg")" ;;
     esac
   done
   if ((dry_run)); then

@@ -59,6 +59,25 @@ ui::enable() {
 
 ui::init
 
+# --- language ---------------------------------------------------------------------------
+# Messages are English printf formats. With I18N_LANG=ru, t prints the Russian format from
+# lib/i18n-ru.sh instead, keyed by the English one; a format without one stays English.
+
+I18N_LANG="${I18N_LANG:-en}"
+# shellcheck source=i18n-ru.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/i18n-ru.sh"
+
+# Prints FORMAT with ARGS, printf style, in the language of the run.
+t() {
+  local format="$1"
+  shift
+  if [[ "$I18N_LANG" == ru && -n "${I18N_RU[$format]+set}" ]]; then
+    format="${I18N_RU[$format]}"
+  fi
+  # shellcheck disable=SC2059  # the formats are messages of this repo, never input
+  printf -- "$format" "$@"
+}
+
 # --- logger: stderr only, stdout stays free for data meant for the user -------------
 
 log::info() { printf '%s[INFO]%s %s\n' "$UI_CYAN" "$UI_RESET" "$*" >&2; }
@@ -75,24 +94,24 @@ log::die() {
 # Opens step N/TOTAL named ID: a heading on a terminal, an info line elsewhere.
 log::step() {
   if ((UI_STYLE)); then
-    printf '\n%s==>%s %sStep %s: %s%s\n' "$UI_BOLD$UI_GREEN" "$UI_RESET" "$UI_BOLD" "$1" "$2" \
+    printf '\n%s==>%s %s%s%s\n' "$UI_BOLD$UI_GREEN" "$UI_RESET" "$UI_BOLD" "$(t 'Step %s: %s' "$1" "$2")" \
       "$UI_RESET" >&2
   else
-    log::info "step $1: $2"
+    log::info "$(t 'step %s: %s' "$1" "$2")"
   fi
 }
 
 # --- guards ---------------------------------------------------------------------------
 
 require::root() {
-  ((EUID == 0)) || log::die "$EXIT_ROOT" "root privileges required: rerun with sudo"
+  ((EUID == 0)) || log::die "$EXIT_ROOT" "$(t 'root privileges required: rerun with sudo')"
 }
 
 require::cmd() {
   local name
   for name in "$@"; do
     command -v "$name" >/dev/null 2>&1 ||
-      log::die "$EXIT_DEPS" "command not found: $name. Install it and rerun"
+      log::die "$EXIT_DEPS" "$(t 'command not found: %s. Install it and rerun' "$name")"
   done
 }
 
@@ -101,8 +120,8 @@ require::cmd() {
 # The optional argument replaces /etc/os-release for tests.
 require::distro() {
   local file="${1:-/etc/os-release}" id="" version="" key value
-  local need="need Ubuntu 22.04/24.04/26.04 or Debian 12"
-  [[ -r "$file" ]] || log::die "$EXIT_DISTRO" "cannot read $file: unsupported OS, $need"
+  [[ -r "$file" ]] ||
+    log::die "$EXIT_DISTRO" "$(t 'cannot read %s: unsupported OS, need Ubuntu 22.04/24.04/26.04 or Debian 12' "$file")"
   while IFS='=' read -r key value || [[ -n "$key" ]]; do
     if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then
       value="${BASH_REMATCH[1]}"
@@ -114,7 +133,7 @@ require::distro() {
   done <"$file"
   case "$id $version" in
     "ubuntu 22.04" | "ubuntu 24.04" | "ubuntu 26.04" | "debian 12") ;;
-    *) log::die "$EXIT_DISTRO" "unsupported OS: ${id:-unknown} ${version:-unknown}, $need" ;;
+    *) log::die "$EXIT_DISTRO" "$(t 'unsupported OS: %s %s, need Ubuntu 22.04/24.04/26.04 or Debian 12' "${id:-unknown}" "${version:-unknown}")" ;;
   esac
   # The stack needs none of the recommended extras (checked on all four targets);
   # DEBIAN_FRONTEND keeps debconf from blocking on a question.
@@ -129,7 +148,7 @@ require::distro() {
 # Runs after require::distro, which sets PKG_INSTALL.
 pkg::install() {
   local pkg cmd missing=()
-  [[ -n "${PKG_INSTALL:-}" ]] || log::die "$EXIT_FAILURE" "pkg::install needs require::distro first"
+  [[ -n "${PKG_INSTALL:-}" ]] || log::die "$EXIT_FAILURE" "$(t 'pkg::install needs require::distro first')"
   for pkg in "$@"; do
     # shellcheck disable=SC2016  # ${Status} is a dpkg-query field, not a shell variable
     if [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" != "install ok installed" ]]; then
@@ -137,16 +156,16 @@ pkg::install() {
     fi
   done
   if ((${#missing[@]} == 0)); then
-    log::info "packages already installed: $*"
+    log::info "$(t 'packages already installed: %s' "$*")"
     return 0
   fi
-  log::info "installing packages: ${missing[*]}"
+  log::info "$(t 'installing packages: %s' "${missing[*]}")"
   # A fresh cloud image ships a stale or empty package index.
   apt-get -o DPkg::Lock::Timeout=300 update -qq >&2 ||
-    log::die "$EXIT_DEPS" "apt-get update failed: check the network and the apt sources"
+    log::die "$EXIT_DEPS" "$(t 'apt-get update failed: check the network and the apt sources')"
   read -ra cmd <<<"$PKG_INSTALL"
   "${cmd[@]}" "${missing[@]}" >&2 ||
-    log::die "$EXIT_DEPS" "cannot install ${missing[*]}: see the apt output above"
+    log::die "$EXIT_DEPS" "$(t 'cannot install %s: see the apt output above' "${missing[*]}")"
 }
 
 # --- files ------------------------------------------------------------------------------
@@ -158,17 +177,17 @@ fs::write() {
   FS_CHANGED=0
   if [[ -f "$path" && "$(<"$path")" == "$content" ]]; then
     chmod "$mode" "$path"
-    log::info "$path is up to date"
+    log::info "$(t '%s is up to date' "$path")"
     return 0
   fi
-  tmp="$(mktemp "$path.XXXXXX")" || log::die "$EXIT_FAILURE" "cannot create a file next to $path"
+  tmp="$(mktemp "$path.XXXXXX")" || log::die "$EXIT_FAILURE" "$(t 'cannot create a file next to %s' "$path")"
   if ! printf '%s\n' "$content" >"$tmp" || ! chmod "$mode" "$tmp" || ! mv -f "$tmp" "$path"; then
     rm -f "$tmp"
-    log::die "$EXIT_FAILURE" "cannot write $path"
+    log::die "$EXIT_FAILURE" "$(t 'cannot write %s' "$path")"
   fi
   # shellcheck disable=SC2034  # read by the callers
   FS_CHANGED=1
-  log::info "wrote $path (mode $mode)"
+  log::info "$(t 'wrote %s (mode %s)' "$path" "$mode")"
 }
 
 # --- validators: return 0 or 1 and print nothing ----------------------------------------
@@ -223,28 +242,29 @@ env::is_secret() { env::_contains "$1" "${ENV_SECRET_KEYS[@]}"; }
 # stripped, and in an unquoted value a # at the start or after a space opens a comment.
 # Unknown keys are skipped with a warning, so a stray PATH= or a typo takes no effect.
 env::load() {
-  local file="$1" line key value n=0 secrets=0
+  # where names the file in messages: a message never reads it.
+  local file="$1" where="$1" line key value n=0 secrets=0
   local re_skip='^[[:space:]]*(#|$)'
   local re_pair='^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$'
   [[ -f "$file" && -r "$file" ]] ||
-    log::die "$EXIT_INPUT" "cannot read $file: run ./deploy.sh to create it"
+    log::die "$EXIT_INPUT" "$(t 'cannot read %s: run ./deploy.sh to create it' "$file")"
   while IFS= read -r line || [[ -n "$line" ]]; do
     n=$((n + 1))
     line="${line%$'\r'}"
     [[ "$line" =~ $re_skip ]] && continue
     # The line itself is never echoed: it may carry a secret.
-    [[ "$line" =~ $re_pair ]] || log::die "$EXIT_INPUT" "$file:$n: expected KEY=VALUE"
+    [[ "$line" =~ $re_pair ]] || log::die "$EXIT_INPUT" "$(t '%s:%s: expected KEY=VALUE' "$where" "$n")"
     key="${BASH_REMATCH[2]}"
     value="${BASH_REMATCH[3]}"
     if env::_contains "$key" "${ENV_RETIRED_KEYS[@]}"; then
       continue
     fi
     if ! env::_contains "$key" "${ENV_KEYS[@]}"; then
-      log::warn "$file:$n: unknown key $key ignored, see .env.example"
+      log::warn "$(t '%s:%s: unknown key %s ignored, see .env.example' "$where" "$n" "$key")"
       continue
     fi
     value="$(env::_literal "$value")" ||
-      log::die "$EXIT_INPUT" "$file:$n: unbalanced quotes in the value of $key"
+      log::die "$EXIT_INPUT" "$(t '%s:%s: unbalanced quotes in the value of %s' "$where" "$n" "$key")"
     printf -v "$key" '%s' "$value"
     export "${key?}"
     if [[ -n "$value" ]] && env::is_secret "$key"; then
@@ -253,7 +273,7 @@ env::load() {
   done <"$file"
   if ((secrets)) &&
     [[ -n "$(find "$file" -maxdepth 0 \( -perm -g=r -o -perm -o=r \) 2>/dev/null)" ]]; then
-    log::warn "$file holds secrets and is readable by other users: run chmod 600 $file"
+    log::warn "$(t '%s holds secrets and is readable by other users: run chmod 600 %s' "$where" "$where")"
   fi
 }
 
@@ -263,7 +283,7 @@ env::require() {
     [[ -n "${!var:-}" ]] || missing+=("$var")
   done
   ((${#missing[@]} == 0)) ||
-    log::die "$EXIT_INPUT" "required settings are empty: ${missing[*]}. Rerun ./deploy.sh to set them"
+    log::die "$EXIT_INPUT" "$(t 'required settings are empty: %s. Rerun ./deploy.sh to set them' "${missing[*]}")"
 }
 
 # Prints the literal value of a raw .env value; fails on unbalanced quotes.
@@ -328,7 +348,7 @@ ui::hidden() {
     printf -v dots '%*s' "$((n > 48 ? 48 : n))" ''
     printf '%s' "${dots// /$UI_DOT}" >&2
     if ((n > 48)); then
-      printf ' %s%d characters%s' "$UI_DIM" "$n" "$UI_RESET" >&2
+      printf ' %s%s%s' "$UI_DIM" "$(t '%s characters' "$n")" "$UI_RESET" >&2
     fi
   fi
   printf '\n' >&2
@@ -421,14 +441,14 @@ confirm() {
     if ((default_rc == 0)); then
       answer=y
     fi
-    ui::question "$prompt" "$UI_KEYS"
-    answer="$(ui::menu "$answer" "y|Yes" "n|No")"
+    ui::question "$prompt" "$(t "$UI_KEYS")"
+    answer="$(ui::menu "$answer" "y|$(t Yes)" "n|$(t No)")"
     ui::field "" ""
     if [[ "$answer" == y ]]; then
-      printf '%s\n' Yes >&2
+      printf '%s\n' "$(t Yes)" >&2
       return 0
     fi
-    printf '%s\n' No >&2
+    printf '%s\n' "$(t No)" >&2
     return 1
   fi
   if ((UI_STYLE)); then
@@ -449,9 +469,9 @@ confirm() {
     answer="${answer//[[:space:]]/}"
     case "${answer,,}" in
       "") return "$default_rc" ;;
-      y | yes) return 0 ;;
-      n | no) return 1 ;;
-      *) ui::rejected "" "answer y or n" ;;
+      y | yes | д | да) return 0 ;;
+      n | no | н | нет) return 1 ;;
+      *) ui::rejected "" "$(t 'answer y or n')" ;;
     esac
   done
 }

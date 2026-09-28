@@ -29,9 +29,9 @@ node::install() {
   mkdir -p "${compose%/*}"
   node::_keep_original "$compose"
   fs::write "$compose" 600 "$(node::_compose)"
-  log::info "starting the node: docker compose up -d in $NODE_DIR"
+  log::info "$(t 'starting the node: docker compose up -d in %s' "$NODE_DIR")"
   docker compose -f "$compose" up -d >&2 ||
-    log::die "$EXIT_FAILURE" "docker compose up -d failed for $NODE_COMPOSE: see the output above"
+    log::die "$EXIT_FAILURE" "$(t 'docker compose up -d failed for %s: see the output above' "$NODE_COMPOSE")"
 }
 
 # Prints the value of KEY (SECRET_KEY or NODE_PORT) from the compose file of a node set
@@ -87,18 +87,18 @@ node::_docker() {
   local installer
   if command -v docker >/dev/null 2>&1; then
     docker compose version >/dev/null 2>&1 ||
-      log::die "$EXIT_DEPS" "docker has no compose plugin: install docker-compose-plugin (docker-compose-v2 in the Ubuntu archive) and rerun"
+      log::die "$EXIT_DEPS" "$(t 'docker has no compose plugin: install docker-compose-plugin (docker-compose-v2 in the Ubuntu archive) and rerun')"
     return 0
   fi
-  log::info "installing Docker from get.docker.com, as the Remnawave docs do for the node"
+  log::info "$(t 'installing Docker from get.docker.com, as the Remnawave docs do for the node')"
   installer="$(mktemp)"
   if ! curl -fsSL --max-time 120 https://get.docker.com -o "$installer" || ! sh "$installer" >&2; then
     rm -f "$installer"
-    log::die "$EXIT_DEPS" "cannot install Docker: see the output above, or install it by hand and rerun"
+    log::die "$EXIT_DEPS" "$(t 'cannot install Docker: see the output above, or install it by hand and rerun')"
   fi
   rm -f "$installer"
   command -v docker >/dev/null 2>&1 ||
-    log::die "$EXIT_DEPS" "get.docker.com finished, but there is no docker command: install Docker by hand and rerun"
+    log::die "$EXIT_DEPS" "$(t 'get.docker.com finished, but there is no docker command: install Docker by hand and rerun')"
 }
 
 # A compose file from another hand is kept once next to the new one, as nginx.conf is.
@@ -107,6 +107,6 @@ node::_keep_original() {
   if [[ -f "$compose" && ! -e "$compose.cdn-deploy-orig" ]] && [[ "$(head -n 1 "$compose")" != "$NODE_MARK" ]]; then
     cp -p "$compose" "$compose.cdn-deploy-orig"
     chmod 600 "$compose.cdn-deploy-orig"
-    log::info "kept the previous $NODE_COMPOSE as $NODE_COMPOSE.cdn-deploy-orig"
+    log::info "$(t 'kept the previous %s as %s.cdn-deploy-orig' "$NODE_COMPOSE" "$NODE_COMPOSE")"
   fi
 }

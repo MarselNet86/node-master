@@ -37,7 +37,7 @@ certs::issue() {
   certs::_render_acme_site
   while IFS= read -r domain; do
     if certs::_is_current "$domain"; then
-      log::info "certificate for $domain is valid for more than $CERTS_MIN_DAYS days, kept"
+      log::info "$(t 'certificate for %s is valid for more than %s days, kept' "$domain" "$CERTS_MIN_DAYS")"
     else
       due+=("$domain")
     fi
@@ -60,7 +60,7 @@ certs::issue() {
     certs::_restart_node
   fi
   if ((${#failed[@]} > 0)); then
-    log::die "$EXIT_CERTS" "no certificate for: ${failed[*]}. Check that each domain has an A record to ORIGIN_IP and that port 80 is open. Details: /var/log/letsencrypt/letsencrypt.log"
+    log::die "$EXIT_CERTS" "$(t 'no certificate for: %s. Check that each domain has an A record to ORIGIN_IP and that port 80 is open. Details: /var/log/letsencrypt/letsencrypt.log' "${failed[*]}")"
   fi
 }
 
@@ -77,7 +77,7 @@ certs::install_renew_hook() {
   fs::write "$SYSROOT$CERTS_HOOKS/post/cdn-deploy-acme.sh" 755 "$(certs::_post_hook)"
   if ! systemctl is-enabled --quiet certbot.timer 2>/dev/null; then
     systemctl enable --now certbot.timer >&2 ||
-      log::warn "cannot enable certbot.timer: certificates will not renew until it runs"
+      log::warn "$(t 'cannot enable certbot.timer: certificates will not renew until it runs')"
   fi
 }
 
@@ -120,16 +120,16 @@ certs::_certbot() {
   else
     args+=(--register-unsafely-without-email)
   fi
-  log::info "issuing a certificate for $domain via HTTP-01"
+  log::info "$(t 'issuing a certificate for %s via HTTP-01' "$domain")"
   certbot "${args[@]}" >&2
 }
 
 # The Hysteria2 inbound loads its certificate when the node starts. On a new server the
 # node comes later, in the panel steps, so the restart has nothing to restart yet.
 certs::_restart_node() {
-  log::info "restarting the node for the new Hysteria2 certificate: $NODE_RELOAD_CMD"
+  log::info "$(t 'restarting the node for the new Hysteria2 certificate: %s' "$NODE_RELOAD_CMD")"
   if ! sh -c "$NODE_RELOAD_CMD" >&2; then
-    log::warn "node restart failed: a node that is not installed yet reads the certificate when it starts; a running one needs '$NODE_RELOAD_CMD'"
+    log::warn "$(t "node restart failed: a node that is not installed yet reads the certificate when it starts; a running one needs '%s'" "$NODE_RELOAD_CMD")"
   fi
 }
 
@@ -152,15 +152,15 @@ certs::_acme_on() {
   ln -sfn "$CERTS_ACME_SITE" "$SYSROOT$CERTS_ACME_LINK"
   if ! nginx -t >&2; then
     rm -f "$SYSROOT$CERTS_ACME_LINK"
-    log::die "$EXIT_CERTS" "nginx rejects the config with the ACME server: see nginx -t above"
+    log::die "$EXIT_CERTS" "$(t 'nginx rejects the config with the ACME server: see nginx -t above')"
   fi
   if ! nginx::reload; then
     rm -f "$SYSROOT$CERTS_ACME_LINK"
-    log::die "$EXIT_CERTS" "nginx did not take the ACME server; :80 stays closed"
+    log::die "$EXIT_CERTS" "$(t 'nginx did not take the ACME server; :80 stays closed')"
   fi
   if ! certs::_wait_for_acme; then
     certs::_acme_off
-    log::die "$EXIT_CERTS" "the ACME server does not answer on 127.0.0.1:80: check that nothing else holds port 80"
+    log::die "$EXIT_CERTS" "$(t 'the ACME server does not answer on 127.0.0.1:80: check that nothing else holds port 80')"
   fi
 }
 
@@ -186,7 +186,7 @@ certs::_wait_for_acme() {
 
 certs::_acme_off() {
   rm -f "$SYSROOT$CERTS_ACME_LINK"
-  nginx::reload || log::die "$EXIT_CERTS" "nginx still serves the ACME server on :80: fix nginx and reload it"
+  nginx::reload || log::die "$EXIT_CERTS" "$(t 'nginx still serves the ACME server on :80: fix nginx and reload it')"
 }
 
 # --- renewal hooks ----------------------------------------------------------------------

@@ -32,7 +32,7 @@ remnawave::emit() {
   inbound="$(remnawave::_render inbound-xhttp-cdn.json.tmpl)"
   host="$(<"$REPO_ROOT/remnawave/host-xhttp-extra.json")"
   jq -e . >/dev/null <<<"$host" ||
-    log::die "$EXIT_FAILURE" "remnawave/host-xhttp-extra.json is not valid JSON"
+    log::die "$EXIT_FAILURE" "$(t '%s is not valid JSON' remnawave/host-xhttp-extra.json)"
   remnawave::_check_sync "$inbound" "$host"
   if [[ -n "${REALITY_SNI:-}" ]]; then
     env::require REALITY_PRIVATE_KEY REALITY_SHORT_ID
@@ -46,10 +46,10 @@ remnawave::emit() {
   profile="$(jq --argjson xhttp "$inbound" --arg reality "$reality" --arg hy2 "$hy2" \
     '.inbounds = [($reality | select(. != "") | fromjson), $xhttp, ($hy2 | select(. != "") | fromjson)]' \
     "$REPO_ROOT/remnawave/config-profile.json")" ||
-    log::die "$EXIT_FAILURE" "remnawave/config-profile.json does not make a valid profile"
+    log::die "$EXIT_FAILURE" "$(t '%s does not make a valid profile' remnawave/config-profile.json)"
   template="$(jq --argjson own "$(remnawave::_own_domains)" \
     'walk(if . == "__OWN_DOMAINS__" then $own else . end)' "$REPO_ROOT/remnawave/subscription-xray-json.json")" ||
-    log::die "$EXIT_FAILURE" "remnawave/subscription-xray-json.json is not valid JSON"
+    log::die "$EXIT_FAILURE" "$(t '%s is not valid JSON' remnawave/subscription-xray-json.json)"
 
   mkdir -p "$out"
   # The files carry the Reality private key, the xhttp path and the obfuscation profile.
@@ -63,7 +63,7 @@ remnawave::emit() {
     esac
     changed=$((changed + FS_CHANGED))
   done
-  jq -e . "$out"/*.json >/dev/null || log::die "$EXIT_FAILURE" "the files in $out are not valid JSON"
+  jq -e . "$out"/*.json >/dev/null || log::die "$EXIT_FAILURE" "$(t 'the files in %s are not valid JSON' "$out")"
   remnawave::_guide "$out" "$changed"
 }
 
@@ -79,7 +79,7 @@ remnawave::_render() {
     NODE_TAG="${NODE_NAME^^}" \
     envsubst '${CDN_DOMAIN} ${XHTTP_PATH} ${XHTTP_PORT} ${HY2_DOMAIN} ${REALITY_SNI} ${REALITY_PRIVATE_KEY} ${REALITY_SHORT_ID} ${NODE_TAG}' \
     <"$REPO_ROOT/remnawave/$name")"
-  jq -e . >/dev/null <<<"$out" || log::die "$EXIT_FAILURE" "remnawave/$name does not render to valid JSON"
+  jq -e . >/dev/null <<<"$out" || log::die "$EXIT_FAILURE" "$(t 'remnawave/%s does not render to valid JSON' "$name")"
   printf '%s' "$out"
 }
 
@@ -113,7 +113,7 @@ remnawave::_check_sync() {
            then ["scMaxEachPostBytes: host \($host.scMaxEachPostBytes) is above the inbound limit \($x.scMaxEachPostBytes // 1000000)"]
            else [] end))[]' "${REMNAWAVE_SYNCED[@]}")"
   if [[ -n "$problems" ]]; then
-    log::die "$EXIT_FAILURE" "the inbound and the host extra in remnawave/ disagree, the tunnel would break through the CDN: $(paste -sd';' <<<"$problems")"
+    log::die "$EXIT_FAILURE" "$(t 'the inbound and the host extra in remnawave/ disagree, the tunnel would break through the CDN: %s' "$(paste -sd';' <<<"$problems")")"
   fi
 }
 
@@ -122,54 +122,56 @@ remnawave::_check_sync() {
 # lists them.
 remnawave::_guide() {
   local out="${1#"$REPO_ROOT"/}" pause="$2" step=0 inbounds="" address bold="" reset=""
-  local tag="${NODE_NAME^^}"
+  local tag="${NODE_NAME^^}" ip
   local -a hosts
   # The colours follow stderr; a guide sent to a file stays plain.
   if [[ -t 1 ]]; then
     bold="$UI_BOLD" reset="$UI_RESET"
   fi
   if [[ -n "${REALITY_SNI:-}" ]]; then
-    inbounds+="VLESS-REALITY-$tag on :443/tcp, "
+    inbounds+="$(t 'VLESS-REALITY-%s on :443/tcp' "$tag"), "
   fi
-  inbounds+="VLESS-XHTTP-CDN-$tag on 127.0.0.1:$XHTTP_PORT"
+  inbounds+="$(t 'VLESS-XHTTP-CDN-%s on 127.0.0.1:%s' "$tag" "$XHTTP_PORT")"
   if [[ -n "${HY2_DOMAIN:-}" ]]; then
-    inbounds+=", HYSTERIA2-$tag on :443/udp"
+    inbounds+=", $(t 'HYSTERIA2-%s on :443/udp' "$tag")"
   fi
-  address="${VLESS_DOMAIN:-${ORIGIN_IP:-<IP of this server>}}"
-  hosts=("CDN: inbound VLESS-XHTTP-CDN-$tag, address $CDN_DOMAIN, port 443. Advanced: SNI and host $CDN_DOMAIN, path $XHTTP_PATH, security TLS, extra <- $out/host-xhttp-extra.json")
+  ip="${ORIGIN_IP:-$(t '<IP of this server>')}"
+  address="${VLESS_DOMAIN:-$ip}"
+  hosts=("$(t 'CDN: inbound VLESS-XHTTP-CDN-%s, address %s, port 443. Advanced: SNI and host %s, path %s, security TLS, extra <- %s/host-xhttp-extra.json' \
+    "$tag" "$CDN_DOMAIN" "$CDN_DOMAIN" "$XHTTP_PATH" "$out")")
   if [[ -n "${REALITY_SNI:-}" ]]; then
-    hosts+=("Reality: inbound VLESS-REALITY-$tag, address $address, port 443")
+    hosts+=("$(t 'Reality: inbound VLESS-REALITY-%s, address %s, port 443' "$tag" "$address")")
   fi
   if [[ -n "${HY2_DOMAIN:-}" ]]; then
-    hosts+=("Hysteria2: inbound HYSTERIA2-$tag, address $HY2_DOMAIN, port 443. Advanced: SNI $HY2_DOMAIN")
+    hosts+=("$(t 'Hysteria2: inbound HYSTERIA2-%s, address %s, port 443. Advanced: SNI %s' "$tag" "$HY2_DOMAIN" "$HY2_DOMAIN")")
   fi
 
-  printf '\n%sRemnawave panel and the CDN resource, step by step.%s The files are in %s/.\n' \
-    "$bold" "$reset" "$out"
+  printf '\n%s%s%s %s\n' "$bold" "$(t 'Remnawave panel and the CDN resource, step by step.')" "$reset" \
+    "$(t 'The files are in %s/.' "$out")"
   # Profile names are unique in the panel too, so the node name serves as one.
-  remnawave::_step "$REPO_ROOT/$out/config-profile.json" "Config profile" \
-    "Config Profiles -> Create Config Profile -> the name $tag -> paste $out/config-profile.json -> Save." \
-    "Inbounds: $inbounds." \
-    "The node keeps a profile of its own? Put only $out/inbound-xhttp-cdn.json into its \"inbounds\"."
+  remnawave::_step "$REPO_ROOT/$out/config-profile.json" "$(t 'Config profile')" \
+    "$(t 'Config Profiles -> Create Config Profile -> the name %s -> paste %s/config-profile.json -> Save.' "$tag" "$out")" \
+    "$(t 'Inbounds: %s.' "$inbounds")" \
+    "$(t 'The node keeps a profile of its own? Put only %s/inbound-xhttp-cdn.json into its "inbounds".' "$out")"
   # The panel asks for the profile when it creates a node, so the node comes second. Its
   # questions take the place of the wait.
-  remnawave::_print "Node" \
-    "New node: Nodes -> Management -> Create node, address ${ORIGIN_IP:-<IP of this server>}; on the last step choose the profile from step 1 with all its inbounds -> Create node." \
-    "The panel then shows docker-compose.yml: ./deploy.sh takes its SECRET_KEY and NODE_PORT once, keeps them in .env and runs the node from $NODE_COMPOSE, installing Docker when it is missing." \
-    "A node already in the panel: the node card -> Change Profile -> the profile from step 1 with all its inbounds."
+  remnawave::_print "$(t 'Node')" \
+    "$(t 'New node: Nodes -> Management -> Create node, address %s; on the last step choose the profile from step 1 with all its inbounds -> Create node.' "$ip")" \
+    "$(t 'The panel then shows docker-compose.yml: ./deploy.sh takes its SECRET_KEY and NODE_PORT once, keeps them in .env and runs the node from %s, installing Docker when it is missing.' "$NODE_COMPOSE")" \
+    "$(t 'A node already in the panel: the node card -> Change Profile -> the profile from step 1 with all its inbounds.')"
   remnawave::_node
-  remnawave::_step "" "Internal squad" \
-    "Internal Squads -> the squad of your users (Default-Squad) -> turn the new inbounds on -> Save."
-  remnawave::_step "$REPO_ROOT/$out/subscription-xray-json.json" "Subscription template" \
-    "Templates -> Xray JSON -> a new template -> paste $out/subscription-xray-json.json -> Save."
+  remnawave::_step "" "$(t 'Internal squad')" \
+    "$(t 'Internal Squads -> the squad of your users (Default-Squad) -> turn the new inbounds on -> Save.')"
+  remnawave::_step "$REPO_ROOT/$out/subscription-xray-json.json" "$(t 'Subscription template')" \
+    "$(t 'Templates -> Xray JSON -> a new template -> paste %s/subscription-xray-json.json -> Save.' "$out")"
   remnawave::_step "$REPO_ROOT/$out/host-xhttp-extra.json" \
-    "Hosts: Hosts -> Create new host, one per inbound; Advanced -> Xray JSON template: the one from step 4" \
+    "$(t 'Hosts: Hosts -> Create new host, one per inbound; Advanced -> Xray JSON template: the one from step 4')" \
     "${hosts[@]}"
-  remnawave::_step "" "CDN resource (Timeweb)" \
-    "Source: ${ORIGIN_IP:-<IP of this server>}:${NGINX_TLS_PORT:-8444}, HTTPS for the source on." \
-    "Distribution domain $CDN_DOMAIN: a CNAME to the technical domain of the resource (*.cdn.twcstorage.ru), then Let's Encrypt in the Timeweb panel." \
-    "Caching stays on; ignoring cache headers, always online and large file acceleration stay off."
-  printf '\nObfuscation fields stay identical in the inbound and the host extra (remnawave/README.md).\n'
+  remnawave::_step "" "$(t 'CDN resource (Timeweb)')" \
+    "$(t 'Source: %s:%s, HTTPS for the source on.' "$ip" "${NGINX_TLS_PORT:-8444}")" \
+    "$(t "Distribution domain %s: a CNAME to the technical domain of the resource (*.cdn.twcstorage.ru), then Let's Encrypt in the Timeweb panel." "$CDN_DOMAIN")" \
+    "$(t 'Caching stays on; ignoring cache headers, always online and large file acceleration stay off.')"
+  printf '\n%s\n' "$(t 'Obfuscation fields stay identical in the inbound and the host extra (remnawave/README.md).')"
 }
 
 # Prints a step, then waits per remnawave::_guide. FILE, when the step pastes one into the
@@ -204,17 +206,17 @@ remnawave::_wait() {
 
 remnawave::_ask_done() {
   if [[ -n "$1" ]]; then
-    printf '     %sEnter when done, s shows %s:%s ' "$UI_DIM" "${1##*/}" "$UI_RESET" >&2
+    printf '     %s%s%s ' "$UI_DIM" "$(t 'Enter when done, s shows %s:' "${1##*/}")" "$UI_RESET" >&2
   else
-    printf '     %sPress Enter when done.%s ' "$UI_DIM" "$UI_RESET" >&2
+    printf '     %s%s%s ' "$UI_DIM" "$(t 'Press Enter when done.')" "$UI_RESET" >&2
   fi
 }
 
 # Prints FILE between two plain lines: no colour and no indent in what is copied.
 remnawave::_show() {
-  printf -- '----- %s: copy from the next line -----\n' "${1#"$REPO_ROOT"/}" >&2
+  printf -- '----- %s -----\n' "$(t '%s: copy from the next line' "${1#"$REPO_ROOT"/}")" >&2
   cat "$1" >&2
-  printf -- '----- end of %s -----\n' "${1##*/}" >&2
+  printf -- '----- %s -----\n' "$(t 'end of %s' "${1##*/}")" >&2
 }
 
 # Prints step TITLE with its LINEs, skipping the empty ones.
@@ -236,7 +238,7 @@ remnawave::_node() {
   if prompt::node "$(node::compose_value SECRET_KEY)" "$(node::compose_value NODE_PORT)"; then
     node::install
   else
-    log::warn "no SECRET_KEY for the node: put SECRET_KEY and NODE_PORT from the docker-compose.yml that the panel shows into $ENV_FILE as NODE_SECRET_KEY and NODE_PORT, rerun ./deploy.sh"
+    log::warn "$(t 'no SECRET_KEY for the node: put SECRET_KEY and NODE_PORT from the docker-compose.yml that the panel shows into %s as NODE_SECRET_KEY and NODE_PORT, rerun ./deploy.sh' "$ENV_FILE")"
   fi
 }
 

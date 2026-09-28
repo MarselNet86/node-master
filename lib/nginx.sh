@@ -29,14 +29,14 @@ nginx::render() {
   env::require CDN_DOMAIN XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT VLESS_DOMAIN
   cert_dir="$(nginx::_cert_dir)"
   if [[ ! -r "$SYSROOT$cert_dir/fullchain.pem" || ! -r "$SYSROOT$cert_dir/privkey.pem" ]]; then
-    log::die "$EXIT_NGINX" "no certificate in $cert_dir: the certs step issues it, rerun ./deploy.sh"
+    log::die "$EXIT_NGINX" "$(t 'no certificate in %s: the certs step issues it, rerun ./deploy.sh' "$cert_dir")"
   fi
-  main="$(nginx::_template nginx.conf.tmpl "$cert_dir" "")" || log::die "$EXIT_NGINX" "cannot render templates/nginx.conf.tmpl"
-  site="$(nginx::_template site-8444.conf.tmpl "$cert_dir" "")" || log::die "$EXIT_NGINX" "cannot render templates/site-8444.conf.tmpl"
+  main="$(nginx::_template nginx.conf.tmpl "$cert_dir" "")" || log::die "$EXIT_NGINX" "$(t 'cannot render %s' templates/nginx.conf.tmpl)"
+  site="$(nginx::_template site-8444.conf.tmpl "$cert_dir" "")" || log::die "$EXIT_NGINX" "$(t 'cannot render %s' templates/site-8444.conf.tmpl)"
   # The id names this exact render; nginx serves it on the loopback, which shows whether
   # the running config is this one.
   id="$(printf '%s\n%s\n' "$main" "$site" | sha256sum | cut -c1-16)"
-  site="$(nginx::_template site-8444.conf.tmpl "$cert_dir" "$id")" || log::die "$EXIT_NGINX" "cannot render templates/site-8444.conf.tmpl"
+  site="$(nginx::_template site-8444.conf.tmpl "$cert_dir" "$id")" || log::die "$EXIT_NGINX" "$(t 'cannot render %s' templates/site-8444.conf.tmpl)"
 
   mkdir -p "$SYSROOT${NGINX_SITE%/*}" "$SYSROOT${NGINX_SITE_LINK%/*}"
   saved="$(mktemp -d)"
@@ -52,19 +52,19 @@ nginx::render() {
   fi
   if [[ -e "$SYSROOT$NGINX_DEFAULT_LINK" || -L "$SYSROOT$NGINX_DEFAULT_LINK" ]]; then
     rm -f "$SYSROOT$NGINX_DEFAULT_LINK"
-    log::info "removed $NGINX_DEFAULT_LINK: the stock site answers any host; sites-available/default stays"
+    log::info "$(t 'removed %s: the stock site answers any host; sites-available/default stays' "$NGINX_DEFAULT_LINK")"
     changed=1
   fi
 
   if ((changed == 0)) && nginx::_serves "$id" 1 1; then
     rm -rf "$saved"
-    log::info "nginx config is up to date and serving"
+    log::info "$(t 'nginx config is up to date and serving')"
     return 0
   fi
   if ! nginx -t >&2; then
     nginx::_restore "$saved"
     rm -rf "$saved"
-    log::die "$EXIT_NGINX" "nginx -t rejects the rendered config, the previous one stays: see the errors above"
+    log::die "$EXIT_NGINX" "$(t 'nginx -t rejects the rendered config, the previous one stays: see the errors above')"
   fi
   # nginx -t does not bind ports, and nginx -s reload succeeds even when the master then
   # keeps the old config, so only the served id proves the reload.
@@ -72,10 +72,10 @@ nginx::render() {
     nginx::_restore "$saved"
     rm -rf "$saved"
     nginx::reload || true
-    log::die "$EXIT_NGINX" "nginx did not put the new config into service, the previous one stays: see /var/log/nginx/error.log (port $NGINX_TLS_PORT taken by another program, for one)"
+    log::die "$EXIT_NGINX" "$(t 'nginx did not put the new config into service, the previous one stays: see /var/log/nginx/error.log (port %s taken by another program, for one)' "$NGINX_TLS_PORT")"
   fi
   rm -rf "$saved"
-  log::info "nginx serves the new config"
+  log::info "$(t 'nginx serves the new config')"
 }
 
 # Reloads nginx, or starts it when it is down. nginx -s reload prints a notice even on
@@ -83,15 +83,15 @@ nginx::render() {
 nginx::reload() {
   local out
   if ! systemctl is-active --quiet nginx; then
-    log::info "nginx is not running: starting it"
+    log::info "$(t 'nginx is not running: starting it')"
     if systemctl start nginx >&2; then
       return 0
     fi
-    log::error "cannot start nginx: see systemctl status nginx"
+    log::error "$(t 'cannot start nginx: see systemctl status nginx')"
     return 1
   fi
   if ! out="$(nginx -s reload 2>&1)"; then
-    log::error "nginx -s reload failed: $out"
+    log::error "$(t 'nginx -s reload failed: %s' "$out")"
     return 1
   fi
 }
@@ -115,7 +115,7 @@ nginx::_template() {
     envsubst '${XHTTP_PORT} ${XHTTP_PATH} ${XHTTP_PATH_BARE} ${NGINX_TLS_PORT} ${CDN_DOMAIN} ${SERVER_NAMES} ${ORIGIN_CERT_DIR} ${CONFIG_ID}' \
     <"$REPO_ROOT/templates/$name")"
   if [[ "$out" == *"\${"* ]]; then
-    log::error "templates/$name has a placeholder that nginx::render does not fill"
+    log::error "$(t 'templates/%s has a placeholder that nginx::render does not fill' "$name")"
     return 1
   fi
   printf '%s' "$out"
@@ -166,13 +166,13 @@ nginx::_restore() {
     fi
     i=$((i + 1))
   done < <(nginx::_managed)
-  log::warn "restored the previous nginx config"
+  log::warn "$(t 'restored the previous nginx config')"
 }
 
 # Keeps the distro's nginx.conf once, before the first overwrite, for a manual revert.
 nginx::_keep_stock_conf() {
   if [[ -f "$SYSROOT$NGINX_CONF" && ! -e "$SYSROOT$NGINX_STOCK_CONF" ]]; then
     cp -p "$SYSROOT$NGINX_CONF" "$SYSROOT$NGINX_STOCK_CONF"
-    log::info "kept the stock nginx.conf as $NGINX_STOCK_CONF"
+    log::info "$(t 'kept the stock nginx.conf as %s' "$NGINX_STOCK_CONF")"
   fi
 }

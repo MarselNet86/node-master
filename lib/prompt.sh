@@ -18,9 +18,9 @@ prompt::collect() {
   env::load "$ENV_EXAMPLE"
   if [[ -f "$ENV_FILE" ]]; then
     env::load "$ENV_FILE"
-    log::info "current values from $ENV_FILE are the defaults"
+    log::info "$(t 'current values from %s are the defaults' "$ENV_FILE")"
   fi
-  log::info "Enter keeps the value in [brackets]"
+  log::info "$(t 'Enter keeps the value in [brackets]')"
   for key in "${ENV_KEYS[@]}"; do
     # A key left without a question keeps its current value.
     if ! prompt::_asks "$key"; then
@@ -90,74 +90,74 @@ prompt::validate() {
       if [[ -z "$value" && "$key" == HY2_DOMAIN ]]; then
         :
       elif [[ -z "$value" && "$key" == VLESS_DOMAIN ]]; then
-        reason="required: a domain of this server with an A record, origin nginx serves its certificate"
+        reason="$(t 'required: a domain of this server with an A record, origin nginx serves its certificate')"
       elif ! is::fqdn "$value"; then
-        reason="expected a domain name like ${sample,,}.example.com$(prompt::_foreign_chars "$value")"
+        reason="$(t 'expected a domain name like %s.example.com%s' "${sample,,}" "$(prompt::_foreign_chars "$value")")"
       elif [[ "$key" == CDN_DOMAIN &&
         ("$value" == "${VLESS_DOMAIN:-}" || "$value" == "${HY2_DOMAIN:-}") ]]; then
-        reason="must differ from VLESS_DOMAIN and HY2_DOMAIN: it resolves to the CDN, they resolve to this server"
+        reason="$(t 'must differ from VLESS_DOMAIN and HY2_DOMAIN: it resolves to the CDN, they resolve to this server')"
       elif [[ "$key" != CDN_DOMAIN && "$value" == "${CDN_DOMAIN:-}" ]]; then
-        reason="must differ from CDN_DOMAIN: it resolves to this server, CDN_DOMAIN to the CDN"
+        reason="$(t 'must differ from CDN_DOMAIN: it resolves to this server, CDN_DOMAIN to the CDN')"
       fi
       ;;
     ORIGIN_IP)
-      is::ipv4 "$value" || reason="expected an IPv4 address like 203.0.113.10"
+      is::ipv4 "$value" || reason="$(t 'expected an IPv4 address like 203.0.113.10')"
       ;;
     XHTTP_PORT | NGINX_TLS_PORT)
       if ! is::port "$value"; then
-        reason="expected a port from 1 to 65535"
+        reason="$(t 'expected a port from 1 to 65535')"
       elif ((value == 443)); then
-        reason="443 belongs to xray: Reality over TCP, Hysteria2 over UDP"
+        reason="$(t '443 belongs to xray: Reality over TCP, Hysteria2 over UDP')"
       elif [[ "$key" == NGINX_TLS_PORT && "$value" == "${XHTTP_PORT:-}" ]]; then
-        reason="must differ from XHTTP_PORT: nginx would take the port of the xray inbound"
+        reason="$(t 'must differ from XHTTP_PORT: nginx would take the port of the xray inbound')"
       fi
       ;;
     XHTTP_PATH)
       # Unreserved URL characters only: the path lands in nginx locations and in JSON.
       if [[ ! "$value" =~ ^/([A-Za-z0-9._~-]+/)+$ || "$value" == */./* || "$value" == */../* ]]; then
-        reason="expected a path like /api/v2.jpg/: starts and ends with /, letters, digits and . _ ~ -"
+        reason="$(t 'expected a path like /api/v2.jpg/: starts and ends with /, letters, digits and . _ ~ -')"
       fi
       ;;
     LE_EMAIL)
       if [[ -n "$value" ]] && ! prompt::_is_email "$value"; then
-        reason="expected an email like ops@example.com, or - for none"
+        reason="$(t 'expected an email like ops@example.com, or - for none')"
       fi
       ;;
     NODE_RELOAD_CMD)
       if [[ -z "$value" ]]; then
-        reason="expected a command like: docker restart remnawave-node"
+        reason="$(t 'expected a command like: docker restart remnanode')"
       elif [[ "$value" == *\'* && "$value" == *\"* ]]; then
-        reason="use either single or double quotes: .env keeps the command as one quoted value"
+        reason="$(t 'use either single or double quotes: .env keeps the command as one quoted value')"
       fi
       ;;
     REALITY_SNI)
       if [[ -n "$value" ]] && ! is::fqdn "$value"; then
-        reason="expected a domain name like www.swiss.com, or - for no Reality$(prompt::_foreign_chars "$value")"
+        reason="$(t 'expected a domain name like www.swiss.com, or - for no Reality%s' "$(prompt::_foreign_chars "$value")")"
       fi
       ;;
     REALITY_PRIVATE_KEY)
       # 32 bytes in unpadded base64url, the form xray x25519 prints.
       [[ "$value" =~ ^[A-Za-z0-9_-]{43}$ ]] ||
-        reason="expected an x25519 private key: 43 characters of base64url"
+        reason="$(t 'expected an x25519 private key: 43 characters of base64url')"
       ;;
     REALITY_SHORT_ID)
-      [[ "$value" =~ ^([0-9a-f]{2}){1,8}$ ]] || reason="expected 2 to 16 hex digits, an even count"
+      [[ "$value" =~ ^([0-9a-f]{2}){1,8}$ ]] || reason="$(t 'expected 2 to 16 hex digits, an even count')"
       ;;
     NODE_NAME)
       [[ "$value" =~ ^[a-z0-9]([a-z0-9-]{0,14}[a-z0-9])?$ ]] ||
-        reason="expected a short name like de1: up to 16 letters, digits and inner -$(prompt::_foreign_chars "$value" a-z0-9-)"
+        reason="$(t 'expected a short name like de1: up to 16 letters, digits and inner -%s' "$(prompt::_foreign_chars "$value" a-z0-9-)")"
       ;;
     NODE_PORT)
       if ! is::port "$value"; then
-        reason="expected a port from 1 to 65535, NODE_PORT in the docker-compose.yml of the panel"
+        reason="$(t 'expected a port from 1 to 65535, NODE_PORT in the docker-compose.yml of the panel')"
       elif [[ "$value" == 443 || "$value" == "${XHTTP_PORT:-}" || "$value" == "${NGINX_TLS_PORT:-}" ]]; then
-        reason="must differ from 443, XHTTP_PORT and NGINX_TLS_PORT: xray and nginx listen there"
+        reason="$(t 'must differ from 443, XHTTP_PORT and NGINX_TLS_PORT: xray and nginx listen there')"
       fi
       ;;
     NODE_SECRET_KEY)
       reason="$(prompt::_node_key_problem "$value")"
       ;;
-    *) reason="$key is not in the .env contract" ;;
+    *) reason="$(t '%s is not in the .env contract' "$key")" ;;
   esac
   if [[ -n "$reason" ]]; then
     printf '%s\n' "$reason"
@@ -171,13 +171,13 @@ prompt::validate() {
 prompt::_node_key_problem() {
   local value="$1"
   if [[ -z "$value" ]]; then
-    echo "nothing entered: copy SECRET_KEY from the docker-compose.yml that the panel shows for the node"
+    t 'nothing entered: copy SECRET_KEY from the docker-compose.yml that the panel shows for the node'
   elif [[ ! "$value" =~ ^[A-Za-z0-9+/]+=*$ ]]; then
-    echo "expected SECRET_KEY from the panel: base64, letters, digits, + and /$(prompt::_foreign_chars "$value" 'A-Za-z0-9+/=')"
+    t 'expected SECRET_KEY from the panel: base64, letters, digits, + and /%s' "$(prompt::_foreign_chars "$value" 'A-Za-z0-9+/=')"
   elif ! base64 -d <<<"$value" 2>/dev/null |
     jq -e 'type == "object" and ([.caCertPem, .jwtPublicKey, .nodeCertPem, .nodeKeyPem] | all(type == "string"))' \
       >/dev/null 2>&1; then
-    echo "it does not decode to the node certificates (caCertPem, jwtPublicKey, nodeCertPem, nodeKeyPem): copy the whole value from the panel"
+    t 'it does not decode to the node certificates (caCertPem, jwtPublicKey, nodeCertPem, nodeKeyPem): copy the whole value from the panel'
   fi
 }
 
@@ -228,7 +228,7 @@ prompt::_ask() {
   if [[ -z "$label" && -n "$default" ]]; then
     label="$default"
     if env::is_secret "$key"; then
-      label="keep current"
+      label="$(t 'keep current')"
     fi
   fi
   if [[ -t 0 ]] && env::is_secret "$key"; then
@@ -257,7 +257,7 @@ prompt::_ask() {
     # A terminal line holds 4095 bytes and drops the rest of a longer paste, so a line that
     # fills it lost its end.
     if ((cut)); then
-      ui::rejected "$key" "the terminal cut the paste at 4095 characters: put $key into $ENV_FILE by hand"
+      ui::rejected "$key" "$(t 'the terminal cut the paste at 4095 characters: put %s into %s by hand' "$key" "$ENV_FILE")"
       continue
     fi
     value="$(prompt::_normalize "$key" "${answer:-$default}")"
@@ -267,7 +267,7 @@ prompt::_ask() {
       return 0
     fi
     if ((eof)); then
-      log::die "$EXIT_INPUT" "$key: $reason. Input ended: run ./deploy.sh in a terminal or complete $ENV_FILE"
+      log::die "$EXIT_INPUT" "$(t '%s: %s. Input ended: run ./deploy.sh in a terminal or complete %s' "$key" "$reason" "$ENV_FILE")"
     fi
     ui::rejected "$key" "$reason"
   done
@@ -282,21 +282,21 @@ prompt::_bytes() {
 # Prints the question for KEY and, after a |, its hint.
 prompt::_question() {
   case "$1" in
-    VLESS_DOMAIN) echo "Domain of this server for origin nginx and direct VLESS|an A record to this server, port 80 open: Let's Encrypt checks it over HTTP" ;;
-    HY2_DOMAIN) echo "Domain for Hysteria2 whose certificate this script issues|an A record to this server; - for none" ;;
-    CDN_DOMAIN) echo "Domain of the CDN resource|a CNAME to the CDN" ;;
-    ORIGIN_IP) echo "Public IPv4 of this server|the origin of the CDN resource" ;;
-    XHTTP_PORT) echo "Local port of the xray xhttp inbound|" ;;
-    XHTTP_PATH) echo "xhttp path|the same in the panel inbound and host" ;;
-    NGINX_TLS_PORT) echo "Port where nginx accepts connections from the CDN edge|" ;;
-    LE_EMAIL) echo "Let's Encrypt contact email|- for none" ;;
-    NODE_RELOAD_CMD) echo "Command that restarts the node after the Hysteria2 certificate renews|certbot runs it after each renewal; remnanode is the container from the panel" ;;
-    REALITY_SNI) echo "Site that VLESS Reality impersonates|TLS 1.3, close to this server, open from Russia; - for no Reality" ;;
-    REALITY_PRIVATE_KEY) echo "Reality x25519 private key|input hidden" ;;
-    REALITY_SHORT_ID) echo "Reality short id|hex" ;;
-    NODE_NAME) echo "Short name of this node for the panel|the inbound tags end with it, de1 gives VLESS-REALITY-DE1: the panel wants every tag unique" ;;
-    NODE_PORT) echo "NODE_PORT of the node|from the same docker-compose.yml; the panel connects to the node on it" ;;
-    NODE_SECRET_KEY) echo "SECRET_KEY of the node|from the docker-compose.yml that the panel shows; input hidden: paste the value or its whole line" ;;
+    VLESS_DOMAIN) t "Domain of this server for origin nginx and direct VLESS|an A record to this server, port 80 open: Let's Encrypt checks it over HTTP" ;;
+    HY2_DOMAIN) t 'Domain for Hysteria2 whose certificate this script issues|an A record to this server; - for none' ;;
+    CDN_DOMAIN) t 'Domain of the CDN resource|a CNAME to the CDN' ;;
+    ORIGIN_IP) t 'Public IPv4 of this server|the origin of the CDN resource' ;;
+    XHTTP_PORT) t 'Local port of the xray xhttp inbound|' ;;
+    XHTTP_PATH) t 'xhttp path|the same in the panel inbound and host' ;;
+    NGINX_TLS_PORT) t 'Port where nginx accepts connections from the CDN edge|' ;;
+    LE_EMAIL) t "Let's Encrypt contact email|- for none" ;;
+    NODE_RELOAD_CMD) t 'Command that restarts the node after the Hysteria2 certificate renews|certbot runs it after each renewal; remnanode is the container from the panel' ;;
+    REALITY_SNI) t 'Site that VLESS Reality impersonates|TLS 1.3, close to this server, open from Russia; - for no Reality' ;;
+    REALITY_PRIVATE_KEY) t 'Reality x25519 private key|input hidden' ;;
+    REALITY_SHORT_ID) t 'Reality short id|hex' ;;
+    NODE_NAME) t 'Short name of this node for the panel|the inbound tags end with it, de1 gives VLESS-REALITY-DE1: the panel wants every tag unique' ;;
+    NODE_PORT) t 'NODE_PORT of the node|from the same docker-compose.yml; the panel connects to the node on it' ;;
+    NODE_SECRET_KEY) t 'SECRET_KEY of the node|from the docker-compose.yml that the panel shows; input hidden: paste the value or its whole line' ;;
   esac
 }
 
@@ -324,7 +324,7 @@ prompt::_trim() {
 # to the characters of a domain, with their positions: a Cyrillic letter that looks Latin,
 # a typographic dash, a key typed as a control code.
 prompt::_foreign_chars() {
-  local LC_ALL=C.UTF-8 s="$1" re="^[${2:-A-Za-z0-9.-}]$" ch n i list="" found=0
+  local LC_ALL=C.UTF-8 s="$1" re="^[${2:-A-Za-z0-9.-}]$" ch n i code list="" found=0
   for ((i = 0; i < ${#s} && found < 3; i++)); do
     ch="${s:i:1}"
     if [[ "$ch" =~ $re ]]; then
@@ -332,19 +332,20 @@ prompt::_foreign_chars() {
     fi
     printf -v n '%d' "'$ch"
     if ((n < 32 || n == 127)); then
-      ch="a control character (an arrow or another special key)"
+      ch="$(t 'a control character (an arrow or another special key)')"
     elif ((n == 32)); then
-      ch="a space"
+      ch="$(t 'a space')"
     elif ((n < 128)); then
       ch="'$ch'"
     elif ((n >= 0x400 && n <= 0x4ff)); then
-      ch="Cyrillic $ch"
+      ch="$(t 'Cyrillic %s' "$ch")"
     elif ((n >= 0x2010 && n <= 0x2015 || n == 0x2212)); then
-      printf -v ch 'a typographic dash %s (U+%04X)' "$ch" "$n"
+      printf -v code 'U+%04X' "$n"
+      ch="$(t 'a typographic dash %s (%s)' "$ch" "$code")"
     else
       printf -v ch '%s (U+%04X)' "$ch" "$n"
     fi
-    list+="${list:+, }$ch at $((i + 1))"
+    list+="${list:+, }$(t '%s at %s' "$ch" "$((i + 1))")"
     # A special key types a whole escape sequence: its start says enough.
     if ((n < 32 || n == 127)); then
       break
@@ -352,7 +353,7 @@ prompt::_foreign_chars() {
     found=$((found + 1))
   done
   if [[ -n "$list" ]]; then
-    printf '; it holds %s' "$list"
+    t '; it holds %s' "$list"
   fi
 }
 
@@ -360,7 +361,7 @@ prompt::_foreign_chars() {
 prompt::_ask_origin_ip() {
   local detected
   if [[ -z "${ORIGIN_IP:-}" ]] && detected="$(prompt::_detect_ip)" &&
-    confirm "Detected public IPv4 $detected. Use it as ORIGIN_IP?" y; then
+    confirm "$(t 'Detected public IPv4 %s. Use it as ORIGIN_IP?' "$detected")" y; then
     export ORIGIN_IP="$detected"
     return 0
   fi
@@ -370,12 +371,12 @@ prompt::_ask_origin_ip() {
 prompt::_detect_ip() {
   local ip
   if ! command -v curl >/dev/null 2>&1; then
-    log::warn "curl not found: enter ORIGIN_IP by hand"
+    log::warn "$(t 'curl not found: enter ORIGIN_IP by hand')"
     return 1
   fi
   # HTTPS, so nobody on the path can swap the address that gets confirmed.
   if ! ip="$(curl -4 -fsS --max-time 5 https://ifconfig.me/ip 2>/dev/null)" || ! is::ipv4 "$ip"; then
-    log::warn "cannot detect the public IPv4 via ifconfig.me: enter ORIGIN_IP by hand"
+    log::warn "$(t 'cannot detect the public IPv4 via ifconfig.me: enter ORIGIN_IP by hand')"
     return 1
   fi
   printf '%s' "$ip"
@@ -388,7 +389,7 @@ prompt::_ask_reality() {
   if [[ -n "${!key:-}" ]]; then
     prompt::_ask "$key"
   elif [[ "$key" == REALITY_PRIVATE_KEY ]]; then
-    prompt::_ask "$key" "$(prompt::_new_reality_key)" "new random"
+    prompt::_ask "$key" "$(prompt::_new_reality_key)" "$(t 'new random')"
   else
     prompt::_ask "$key" "$(prompt::_new_short_id)"
   fi
@@ -416,7 +417,7 @@ prompt::node() {
     return 1
   fi
   UI_NUMBER=""
-  prompt::_ask NODE_SECRET_KEY "$secret" "${secret:+from docker-compose.yml}"
+  prompt::_ask NODE_SECRET_KEY "$secret" "${secret:+$(t 'from docker-compose.yml')}"
   prompt::_ask NODE_PORT "${port:-${NODE_PORT:-}}"
   prompt::_write_env
 }
@@ -434,7 +435,7 @@ prompt::_write_env() {
   local key
   for key in "${ENV_KEYS[@]}"; do
     if [[ "${!key:-}" == *\'* && "${!key:-}" == *\"* ]]; then
-      log::die "$EXIT_INPUT" "$key holds both ' and \": .env cannot keep it, fix it in $ENV_FILE"
+      log::die "$EXIT_INPUT" "$(t "%s holds both ' and \": .env cannot keep it, fix it in %s" "$key" "$ENV_FILE")"
     fi
   done
   fs::write "$ENV_FILE" 600 "$(prompt::_render_env)"

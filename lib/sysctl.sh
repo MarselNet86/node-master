@@ -27,10 +27,10 @@ sysctl::apply() {
   changed=$((changed | FS_CHANGED))
 
   if ((changed)) || ! sysctl::_in_effect quiet; then
-    log::info "applying kernel settings: sysctl --system"
+    log::info "$(t 'applying kernel settings: sysctl --system')"
     backlog="$(sysctl -n net.core.somaxconn 2>/dev/null || true)"
     # Another file failing to apply is not ours to fix; the check below covers ours.
-    sysctl --system >&2 || log::warn "sysctl --system reported errors, see above"
+    sysctl --system >&2 || log::warn "$(t 'sysctl --system reported errors, see above')"
     # somaxconn caps the backlog when nginx opens a port, so only a changed one needs a
     # restart. A kernel that refuses it would otherwise restart nginx on every run.
     if [[ "$(sysctl -n net.core.somaxconn 2>/dev/null || true)" != "$backlog" ]]; then
@@ -38,7 +38,7 @@ sysctl::apply() {
     fi
     sysctl::_in_effect warn || true
   else
-    log::info "kernel settings are in effect"
+    log::info "$(t 'kernel settings are in effect')"
   fi
 
   fs::write "$SYSROOT$SYSCTL_NGINX_DROPIN" 644 "$(sysctl::_nginx_dropin)"
@@ -48,8 +48,8 @@ sysctl::apply() {
   fi
   fs::write "$SYSROOT$SYSCTL_LIMITS" 644 "$(sysctl::_limits)"
   if ((restart)) && systemctl is-active --quiet nginx; then
-    log::info "restarting nginx for the new backlog and open-file limits"
-    systemctl restart nginx >&2 || log::die "$EXIT_FAILURE" "nginx did not restart: see systemctl status nginx"
+    log::info "$(t 'restarting nginx for the new backlog and open-file limits')"
+    systemctl restart nginx >&2 || log::die "$EXIT_FAILURE" "$(t 'nginx did not restart: see systemctl status nginx')"
   fi
 }
 
@@ -90,11 +90,11 @@ sysctl::_in_effect() {
   while IFS='=' read -r key want; do
     key="${key//[[:space:]]/}"
     want="$(sysctl::_norm "$key" "$want")"
-    have="$(sysctl::_norm "$key" "$(sysctl -n "$key" 2>/dev/null || echo '<missing>')")"
+    have="$(sysctl::_norm "$key" "$(sysctl -n "$key" 2>/dev/null || t '<missing>')")"
     if ! sysctl::_holds "$key" "$want" "$have"; then
       ok=1
       if [[ "$mode" == warn ]]; then
-        log::warn "$key is ${have:-<empty>}, not $want: $(sysctl::_hint "$key")"
+        log::warn "$(t '%s is %s, not %s: %s' "$key" "${have:-$(t '<empty>')}" "$want" "$(sysctl::_hint "$key")")"
       fi
     fi
   done < <(sed -E '/^[[:space:]]*(#|$)/d' "$SYSROOT$SYSCTL_CONF" "$SYSROOT$SYSCTL_RESERVED")
@@ -128,8 +128,8 @@ sysctl::_norm() {
 sysctl::_hint() {
   case "$1" in
     net.ipv4.tcp_congestion_control)
-      echo "the kernel has no tcp_bbr module (OpenVZ/LXC containers lack it), see tcp_available_congestion_control"
+      t 'the kernel has no tcp_bbr module (OpenVZ/LXC containers lack it), see tcp_available_congestion_control'
       ;;
-    *) echo "a later file in /etc/sysctl.d or /etc/sysctl.conf overrides it, or a container kernel forbids it" ;;
+    *) t 'a later file in /etc/sysctl.d or /etc/sysctl.conf overrides it, or a container kernel forbids it' ;;
   esac
 }
