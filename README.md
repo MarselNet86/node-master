@@ -2,9 +2,9 @@
 
 <h1 align="center">node-master</h1>
 
-<p align="center"><b>Нода Remnawave за Timeweb CDN одной командой.</b></p>
+<p align="center"><b>Нода Remnawave с CDN, Reality и Hysteria2 одной командой.</b></p>
 
-<p align="center"><img src="docs/readme/hero.svg" width="920" alt="Терминал: sudo ./deploy.sh проходит четыре слоя проверки (xray, origin nginx, путь xhttp, CDN edge), затем ./check.sh показывает серверы подписки CDN, Reality и Hysteria2 со статусом OK и задержкой"></p>
+<p align="center"><img src="docs/readme/hero.svg" width="920" alt="Терминал в конце установки: шаг 10/10 validate проходит четыре слоя проверки (xray, origin nginx, путь xhttp, CDN edge), затем ./check.sh проверяет три сервера подписки, CDN, Reality и Hysteria2, и все три OK"></p>
 
 <p align="center">
   <a href="#что-нужно"><img alt="Ubuntu 22.04, 24.04 и 26.04" src="https://img.shields.io/badge/Ubuntu-22.04%20%7C%2024.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white"></a>
@@ -27,7 +27,15 @@
 
 ## Что делает
 
-`deploy.sh` делает из сервера ноду Remnawave, к которой клиенты подключаются через Timeweb CDN, а напрямую — по Reality и Hysteria2:
+`deploy.sh` настраивает ноду Remnawave сразу под три способа подключения, и клиенты получают все три в одной подписке:
+
+- **VLESS xhttp через Timeweb CDN:** клиент подключается к CDN, а не к IP сервера;
+- **VLESS Reality:** напрямую, 443/tcp;
+- **Hysteria2:** напрямую, 443/udp.
+
+Reality и Hysteria2 можно не включать: `REALITY_SNI=-` и пустой `HY2_DOMAIN`.
+
+Что для этого делает скрипт:
 
 1. **nginx для CDN.** Слушает `:8444`, принимает соединения от CDN и передаёт xhttp в xray на `127.0.0.1:4443`. Путь без слэша на конце, который присылает Timeweb, тоже доходит до xray, остальные запросы получают 403.
 2. **Сертификаты.** Выпускает Let's Encrypt по HTTP-01 для `VLESS_DOMAIN` и `HY2_DOMAIN` и продлевает их через `certbot.timer`. Порт 80 открыт только на время выпуска и продления. После продления перезагружает nginx, а после продления сертификата Hysteria2 перезапускает ноду.
@@ -37,6 +45,8 @@
 6. **Проверка.** Проходит цепочку xray → nginx → путь xhttp → CDN и на первом сбое пишет, что исправить.
 
 `check.sh` проверяет подписку: отвечает ли каждый сервер и идёт ли через него трафик.
+
+Как идёт трафик:
 
 ```
 Клиент --VLESS xhttp (TLS, 443)--> Timeweb CDN --HTTPS--> nginx :8444 --HTTP--> xray 127.0.0.1:4443
