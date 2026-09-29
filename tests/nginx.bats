@@ -62,9 +62,10 @@ if [ "$1" = -s ]; then
   fi
   echo "nginx: [notice] signal process started" >&2
   # The master keeps the old config when it cannot apply the new one, a busy port say.
+  # Without the origin site there is no id to serve.
   if [ ! -e "$STUB_DIR/reload-ignored" ]; then
     sed -n 's/.*return 200 "\(.*\)";.*/\1/p' \
-      "$CDN_DEPLOY_SYSROOT/etc/nginx/sites-available/cdn-deploy.conf" >"$STUB_DIR/live-id"
+      "$CDN_DEPLOY_SYSROOT/etc/nginx/sites-available/cdn-deploy.conf" >"$STUB_DIR/live-id" 2>/dev/null || true
   fi
 fi
 EOF
@@ -75,7 +76,7 @@ case "$1" in
   start)
     rm -f "$STUB_DIR/nginx-down"
     sed -n 's/.*return 200 "\(.*\)";.*/\1/p' \
-      "$CDN_DEPLOY_SYSROOT/etc/nginx/sites-available/cdn-deploy.conf" >"$STUB_DIR/live-id"
+      "$CDN_DEPLOY_SYSROOT/etc/nginx/sites-available/cdn-deploy.conf" >"$STUB_DIR/live-id" 2>/dev/null || true
     ;;
 esac
 EOF
@@ -203,6 +204,49 @@ has() {
   [ ! -L "$ROOT/etc/nginx/sites-enabled/default" ]
   [ -f "$ROOT/etc/nginx/sites-available/default" ]
   [[ "$output" == *"removed /etc/nginx/sites-enabled/default"* ]]
+}
+
+@test "without a CDN nginx gets the main config and no origin site, and a rerun changes nothing" {
+  CDN_DOMAIN="" run nginx::render
+  [ "$status" -eq 0 ]
+  has "$CONF" 'worker_rlimit_nofile 65535;'
+  [ ! -e "$SITE" ]
+  [ ! -L "$ROOT/etc/nginx/sites-enabled/cdn-deploy.conf" ]
+  [ ! -L "$ROOT/etc/nginx/sites-enabled/default" ]
+  [ "$(calls '^nginx -t')" -eq 1 ]
+  [ "$(calls '^nginx -s reload')" -eq 1 ]
+  # No site serves a config id, so nothing probes for one.
+  [ "$(calls '^curl')" -eq 0 ]
+  [[ "$output" == *"nginx took the new config, without an origin site: no CDN_DOMAIN"* ]]
+  : >"$TMP/calls"
+  CDN_DOMAIN="" run nginx::render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nginx config is up to date, without an origin site: no CDN_DOMAIN"* ]]
+  [ "$(calls '^nginx')" -eq 0 ]
+}
+
+@test "dropping the CDN takes the origin site of an earlier run away" {
+  run nginx::render
+  [ "$status" -eq 0 ]
+  [ -e "$SITE" ]
+  CDN_DOMAIN="" run nginx::render
+  [ "$status" -eq 0 ]
+  [ ! -e "$SITE" ]
+  [ ! -L "$ROOT/etc/nginx/sites-enabled/cdn-deploy.conf" ]
+  [[ "$output" == *"removed /etc/nginx/sites-available/cdn-deploy.conf: no CDN_DOMAIN"* ]]
+}
+
+@test "without a CDN a config that nginx -t rejects is rolled back and exits 7" {
+  local before
+  touch "$TMP/nginx-t-fail"
+  before="$(snapshot "$ROOT/etc/nginx" | grep -v cdn-deploy-orig)"
+  CDN_DOMAIN="" run nginx::render
+  [ "$status" -eq 7 ]
+  [[ "$output" == *"restored the previous nginx config"* ]]
+  [ "$(snapshot "$ROOT/etc/nginx" | grep -v cdn-deploy-orig)" = "$before" ]
+  [ "$(cat "$CONF")" = stock ]
+  [ "$(readlink "$ROOT/etc/nginx/sites-enabled/default")" = /etc/nginx/sites-available/default ]
+  [ "$(calls '^nginx -s reload')" -eq 0 ]
 }
 
 @test "the stock nginx.conf is kept once, before the first overwrite" {

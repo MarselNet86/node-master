@@ -28,10 +28,10 @@ deploy::failed() {
   log::error "$(t 'unexpected failure (exit %s) at %s:%s: %s' "$@")"
 }
 
-# System packages the stack runs on (tech.md §2). procps brings sysctl: minimal Debian
-# images lack it.
+# System packages the stack runs on (tech.md §2). procps brings sysctl and iproute2 ss,
+# which finds the UDP port of Hysteria2: minimal Debian images lack them.
 readonly -a PACKAGES=(nginx certbot curl jq openssl coreutils
-  gettext-base procps)
+  gettext-base procps iproute2)
 
 # Steps in execution order: "<id> <function> [<module function it needs>]".
 # A step whose function does not exist yet is marked in the plan and stops a real run.
@@ -81,7 +81,16 @@ deploy::preflight() {
 deploy::load_config() {
   env::load "$ENV_EXAMPLE"
   env::load "$ENV_FILE"
-  env::require VLESS_DOMAIN CDN_DOMAIN ORIGIN_IP NODE_NAME
+  env::require VLESS_DOMAIN ORIGIN_IP NODE_NAME
+  deploy::require_inbound
+}
+
+# Each of the CDN, Reality and Hysteria2 may stay off, but not all three: the profile needs
+# an inbound.
+deploy::require_inbound() {
+  if [[ -z "${REALITY_SNI:-}${HY2_DOMAIN:-}" ]] && ! env::has_cdn; then
+    log::die "$EXIT_INPUT" "$(t 'no inbound to set up: set CDN_DOMAIN, REALITY_SNI or HY2_DOMAIN in %s' "$ENV_FILE")"
+  fi
 }
 
 deploy::packages() { pkg::install "${PACKAGES[@]}"; }
@@ -127,6 +136,7 @@ deploy::plan() {
     settings_from="$(t 'no .env yet: .env.example defaults, step 2 asks for every value')"
   fi
   deploy::advise env::require VLESS_DOMAIN
+  deploy::advise deploy::require_inbound
   t 'cdn-deploy dry run: nothing is changed.\n\nSettings (%s):\n' "$settings_from"
   for key in "${ENV_KEYS[@]}"; do
     printf '  %-22s %s\n' "$key" "$(deploy::show "$key" "$(t '<unset>')")"
@@ -152,39 +162,79 @@ deploy::describe() {
     config) t 'load .env over the .env.example defaults, check required settings' ;;
     packages) t 'install missing: %s' "${PACKAGES[*]}" ;;
     sysctl)
-      t '/etc/sysctl.d/99-cdn.conf, reserve ports %s,%s, apply and check; nofile 65535 for nginx and logins' \
-        "$xhttp_port" "$tls_port"
+      if env::has_cdn; then
+        t '/etc/sysctl.d/99-cdn.conf, reserve ports %s,%s, apply and check; nofile 65535 for nginx and logins' \
+          "$xhttp_port" "$tls_port"
+      else
+        t '/etc/sysctl.d/99-cdn.conf, apply and check; nofile 65535 for nginx and logins; no ports to reserve without CDN_DOMAIN'
+      fi
       ;;
     certs)
-      t "Let's Encrypt via HTTP-01 on :80: %s; skip certificates valid 30+ days" \
-        "$(deploy::cert_domains)"
+      if [[ -n "$(deploy::cert_domains)" ]]; then
+        t "Let's Encrypt via HTTP-01 on :80: %s; skip certificates valid 30+ days" \
+          "$(deploy::cert_domains)"
+      else
+        t 'no certificate: neither CDN_DOMAIN nor HY2_DOMAIN is set'
+      fi
       ;;
     renew-hook)
       t 'certbot deploy hook: nginx reload%s; pre/post hooks open :80 for HTTP-01; certbot.timer on' \
         "$(deploy::node_reload_plan)"
       ;;
     nginx)
-      t 'templates/ into /etc/nginx/: :%s %s (certificate of %s) -> 127.0.0.1:%s; drop %s; nginx -t; reload' \
-        "$tls_port" "$cdn" "$(deploy::show VLESS_DOMAIN)" "$xhttp_port" "sites-enabled/default"
+      if env::has_cdn; then
+        t 'templates/ into /etc/nginx/: :%s %s (certificate of %s) -> 127.0.0.1:%s; drop %s; nginx -t; reload' \
+          "$tls_port" "$cdn" "$(deploy::show VLESS_DOMAIN)" "$xhttp_port" "sites-enabled/default"
+      else
+        t 'templates/nginx.conf.tmpl into /etc/nginx/, no origin site without CDN_DOMAIN; drop %s; nginx -t; reload' \
+          "sites-enabled/default"
+      fi
       ;;
     remnawave)
-      t 'render out/remnawave/: config profile, host extra, Xray JSON template, xhttp inbound; walk through the panel (the profile, then the node with it) and the CDN resource; start the node from %s with its SECRET_KEY%s, installing Docker when it is missing' \
+      t 'render out/remnawave/ for %s: config profile, Xray JSON template%s; walk through the panel, the profile first, then the node with it; start the node from %s with its SECRET_KEY%s, installing Docker when it is missing' \
+        "$(deploy::inbounds)" "$(env::has_cdn && t ', host extra and xhttp inbound for the CDN')" \
         "$NODE_COMPOSE" "$([[ -n "${HY2_DOMAIN:-}" ]] && t ' and /etc/letsencrypt mounted for Hysteria2')"
       ;;
     validate)
-      t 'layers: xray 127.0.0.1:%s; origin :%s /cdn-check 204; %stest 400 with padding; CDN %s /cdn-check 204' \
-        "$xhttp_port" "$tls_port" "$(deploy::show XHTTP_PATH)" "$cdn"
+      if env::has_cdn; then
+        t 'layers: xray 127.0.0.1:%s; origin :%s /cdn-check 204; %stest 400 with padding; CDN %s /cdn-check 204' \
+          "$xhttp_port" "$tls_port" "$(deploy::show XHTTP_PATH)" "$cdn"
+      elif [[ -n "${REALITY_SNI:-}" ]]; then
+        t 'layer 1: xray listens on :443/tcp (Reality); without CDN_DOMAIN the CDN layers do not apply'
+      else
+        t 'layer 1: xray listens on :443/udp (Hysteria2); without CDN_DOMAIN the CDN layers do not apply'
+      fi
       ;;
   esac
 }
 
-# VLESS_DOMAIN, whose certificate origin nginx serves, and HY2_DOMAIN when it is set: an
-# empty one means a server that already runs Hysteria2 with a certificate of its own.
+# VLESS_DOMAIN with the CDN, since origin nginx serves its certificate, and HY2_DOMAIN when
+# it is set: an empty one means no Hysteria2, or a server that runs it with a certificate
+# of its own.
 deploy::cert_domains() {
-  printf '%s' "$(deploy::show VLESS_DOMAIN)"
-  if [[ -n "${HY2_DOMAIN:-}" && "$HY2_DOMAIN" != "${VLESS_DOMAIN:-}" ]]; then
-    printf ' %s' "$HY2_DOMAIN"
+  local list=""
+  if env::has_cdn; then
+    list="$(deploy::show VLESS_DOMAIN)"
   fi
+  if [[ -n "${HY2_DOMAIN:-}" && " $list " != *" $HY2_DOMAIN "* ]]; then
+    list+="${list:+ }$HY2_DOMAIN"
+  fi
+  printf '%s' "$list"
+}
+
+# The inbounds of the profile, as the plan names them.
+deploy::inbounds() {
+  local list=""
+  if [[ -n "${REALITY_SNI:-}" ]]; then
+    list=Reality
+  fi
+  if env::has_cdn; then
+    list+="${list:+, }$(t 'xhttp through the CDN')"
+  fi
+  if [[ -n "${HY2_DOMAIN:-}" ]]; then
+    list+="${list:+, }Hysteria2"
+  fi
+  printf '%s' "${list:-$(t 'no inbound')}"
 }
 
 deploy::node_reload_plan() {

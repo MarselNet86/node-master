@@ -115,7 +115,7 @@ conversions() {
   printf '%s\n' vless.example.com hy2.example.com cdn.example.com 203.0.113.10 "" "" "" "" "" >"$TMP/answers"
   I18N_LANG=ru run prompt::collect <"$TMP/answers"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Домен этого сервера для origin nginx и прямого VLESS (A-запись на этот сервер, порт 80 открыт: Let's Encrypt проверяет его по HTTP)"* ]]
+  [[ "$output" == *"Домен этого сервера для прямого VLESS и origin nginx (A-запись на этот сервер; с CDN порт 80 открыт: Let's Encrypt проверяет его по HTTP)"* ]]
   [[ "$output" == *"[INFO] Enter оставляет значение в [скобках]"* ]]
   grep -qx 'UI_LANG=ru' "$ENV_FILE"
 }

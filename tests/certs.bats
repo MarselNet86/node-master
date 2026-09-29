@@ -218,6 +218,36 @@ snapshot() {
   [ "$sequence" = "nginx -t|nginx -s reload|certbot vless.example.com /var/www/cdn-deploy-acme|certbot hy2.example.com /var/www/cdn-deploy-acme|nginx -s reload|" ]
 }
 
+@test "without a CDN only Hysteria2 gets a certificate, and the ACME probes use its name" {
+  CDN_DOMAIN="" run certs::issue
+  [ "$status" -eq 0 ]
+  [ "$(calls '^certbot certonly')" -eq 1 ]
+  grep -qF -- "--cert-name hy2.example.com -d hy2.example.com" "$TMP/calls"
+  grep -qF 'server_name hy2.example.com;' "$TMP/root/etc/nginx/sites-available/cdn-deploy-acme.conf"
+  [ "$(calls 'Host: hy2.example.com')" -gt 0 ]
+  [ "$(calls 'Host: vless.example.com')" -eq 0 ]
+  acme_closed
+}
+
+@test "without the CDN and Hysteria2 no certificate is due, and :80 stays shut" {
+  CDN_DOMAIN="" HY2_DOMAIN="" run certs::issue
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no certificate to issue: neither CDN_DOMAIN nor HY2_DOMAIN is set"* ]]
+  [ "$(calls '^certbot')" -eq 0 ]
+  [ "$(calls '^nginx')" -eq 0 ]
+  [ ! -e "$TMP/root/etc/nginx/sites-available/cdn-deploy-acme.conf" ]
+  acme_closed
+}
+
+@test "without a CDN the pre hook probes the ACME server by the Hysteria2 name" {
+  local pre="$LE/renewal-hooks/pre/cdn-deploy-acme.sh"
+  run certs::install_renew_hook
+  grep -qF "Host: vless.example.com" "$pre"
+  CDN_DOMAIN="" run certs::install_renew_hook
+  [ "$status" -eq 0 ]
+  grep -qF "Host: hy2.example.com" "$pre"
+}
+
 @test "leaves nginx as it was when nginx rejects the ACME server" {
   touch "$TMP/nginx-t-fail"
   run certs::issue

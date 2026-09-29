@@ -321,3 +321,32 @@ EOF
   run validate::layers
   [[ "$output" != *WARN* ]]
 }
+
+@test "without a CDN layer 1 checks Reality on :443/tcp and the CDN layers do not apply" {
+  CDN_DOMAIN="" REALITY_SNI=www.swiss.com run validate::layers
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"layer 1 (xray): :443/tcp accepts connections"* ]]
+  [[ "$output" == *"without CDN_DOMAIN the CDN layers do not apply: origin nginx, xhttp path, CDN edge"* ]]
+  [ "$(calls 'curl .*--resolve')" -eq 0 ]
+  [ "$(calls 'nocache')" -eq 0 ]
+}
+
+@test "without a CDN and Reality layer 1 looks for Hysteria2 on :443/udp" {
+  echo 'UNCONN 0 0 0.0.0.0:443 0.0.0.0:*' >"$TMP/ss"
+  CDN_DOMAIN="" REALITY_SNI="" HY2_DOMAIN=hy2.example.com run validate::layers
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"layer 1 (xray): :443/udp is open"* ]]
+  rm "$TMP/ss"
+  node_container running /etc/letsencrypt
+  CDN_DOMAIN="" REALITY_SNI="" HY2_DOMAIN=hy2.example.com run validate::layers
+  [ "$status" -eq 8 ]
+  [[ "$output" == *"layer 1 (xray) failed: nothing listens on :443/udp: the node runs, but xray has no HYSTERIA2-NODE1"* ]]
+}
+
+@test "without a CDN an ORIGIN_IP of another host warns about the node address in the panel" {
+  echo "10.0.0.5" >"$TMP/addresses"
+  echo 198.51.100.7 >"$TMP/public-ip"
+  CDN_DOMAIN="" REALITY_SNI=www.swiss.com run validate::layers
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ORIGIN_IP=203.0.113.10 is not an address of this host, whose public IPv4 is 198.51.100.7: the node address in the panel may point elsewhere"* ]]
+}

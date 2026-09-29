@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # Files for the Remnawave panel (tech.md §5, §6): renders remnawave/ into out/remnawave/
-# for this node's domains, then walks the operator through the panel and the CDN resource.
+# for this node's domains and inbounds, then walks the operator through the panel and,
+# with a CDN, the CDN resource.
 # The panel manages xray on the node: the operator pastes the files by hand. At panel step
 # 2 the node that the panel created starts on this server (lib/node.sh).
 
@@ -21,19 +22,25 @@ readonly -a REMNAWAVE_SYNCED=(
   uplinkChunkSize uplinkHTTPMethod uplinkDataPlacement serverMaxHeaderBytes
 )
 
-# Writes the three files the panel takes (config profile, host extra, Xray JSON
-# subscription template) plus the xhttp inbound alone, for a node that keeps its own
-# profile. Then prints the steps; in a terminal it waits for each one while a file changed.
+# Writes the files the panel takes: the config profile and the Xray JSON subscription
+# template, and with the CDN the host extra and the xhttp inbound alone, for a node that
+# keeps its own profile. Then prints the steps; in a terminal it waits for each one while
+# a file changed.
 remnawave::emit() {
-  local out="$REPO_ROOT/out/remnawave" inbound host reality="" hy2="" profile template
+  local out="$REPO_ROOT/out/remnawave" inbound="" host="" reality="" hy2="" profile template
   local file changed=0
+  local -a files=(config-profile subscription-xray-json)
   require::cmd envsubst jq
-  env::require CDN_DOMAIN XHTTP_PATH XHTTP_PORT NODE_NAME
-  inbound="$(remnawave::_render inbound-xhttp-cdn.json.tmpl)"
-  host="$(<"$REPO_ROOT/remnawave/host-xhttp-extra.json")"
-  jq -e . >/dev/null <<<"$host" ||
-    log::die "$EXIT_FAILURE" "$(t '%s is not valid JSON' remnawave/host-xhttp-extra.json)"
-  remnawave::_check_sync "$inbound" "$host"
+  env::require NODE_NAME
+  if env::has_cdn; then
+    env::require XHTTP_PATH XHTTP_PORT
+    inbound="$(remnawave::_render inbound-xhttp-cdn.json.tmpl)"
+    host="$(<"$REPO_ROOT/remnawave/host-xhttp-extra.json")"
+    jq -e . >/dev/null <<<"$host" ||
+      log::die "$EXIT_FAILURE" "$(t '%s is not valid JSON' remnawave/host-xhttp-extra.json)"
+    remnawave::_check_sync "$inbound" "$host"
+    files+=(host-xhttp-extra inbound-xhttp-cdn)
+  fi
   if [[ -n "${REALITY_SNI:-}" ]]; then
     env::require REALITY_PRIVATE_KEY REALITY_SHORT_ID
     reality="$(remnawave::_render inbound-reality.json.tmpl)"
@@ -43,8 +50,8 @@ remnawave::emit() {
     hy2="$(remnawave::_render inbound-hysteria2.json.tmpl |
       jq --arg sni "${REALITY_SNI:-}" 'if $sni == "" then del(.streamSettings.hysteriaSettings.masquerade) else . end')"
   fi
-  profile="$(jq --argjson xhttp "$inbound" --arg reality "$reality" --arg hy2 "$hy2" \
-    '.inbounds = [($reality | select(. != "") | fromjson), $xhttp, ($hy2 | select(. != "") | fromjson)]' \
+  profile="$(jq --arg reality "$reality" --arg xhttp "$inbound" --arg hy2 "$hy2" \
+    '.inbounds = [($reality, $xhttp, $hy2) | select(. != "") | fromjson]' \
     "$REPO_ROOT/remnawave/config-profile.json")" ||
     log::die "$EXIT_FAILURE" "$(t '%s does not make a valid profile' remnawave/config-profile.json)"
   template="$(jq --argjson own "$(remnawave::_own_domains)" \
@@ -54,7 +61,7 @@ remnawave::emit() {
   mkdir -p "$out"
   # The files carry the Reality private key, the xhttp path and the obfuscation profile.
   chmod 700 "$REPO_ROOT/out" "$out"
-  for file in config-profile host-xhttp-extra subscription-xray-json inbound-xhttp-cdn; do
+  for file in "${files[@]}"; do
     case "$file" in
       config-profile) fs::write "$out/$file.json" 600 "$profile" ;;
       host-xhttp-extra) fs::write "$out/$file.json" 600 "$host" ;;
@@ -63,6 +70,16 @@ remnawave::emit() {
     esac
     changed=$((changed + FS_CHANGED))
   done
+  # The CDN files of an earlier run would lead to an inbound the profile no longer has.
+  if ! env::has_cdn; then
+    for file in host-xhttp-extra inbound-xhttp-cdn; do
+      if [[ -e "${out:?}/$file.json" ]]; then
+        rm -f -- "${out:?}/$file.json"
+        log::info "$(t 'removed %s: no CDN_DOMAIN' "$out/$file.json")"
+        changed=$((changed + 1))
+      fi
+    done
+  fi
   jq -e . "$out"/*.json >/dev/null || log::die "$EXIT_FAILURE" "$(t 'the files in %s are not valid JSON' "$out")"
   remnawave::_guide "$out" "$changed"
 }
@@ -73,7 +90,7 @@ remnawave::emit() {
 remnawave::_render() {
   local name="$1" out
   # shellcheck disable=SC2016  # envsubst takes the placeholder list literally
-  out="$(CDN_DOMAIN="$CDN_DOMAIN" XHTTP_PATH="$XHTTP_PATH" XHTTP_PORT="$XHTTP_PORT" \
+  out="$(CDN_DOMAIN="${CDN_DOMAIN:-}" XHTTP_PATH="${XHTTP_PATH:-}" XHTTP_PORT="${XHTTP_PORT:-}" \
     HY2_DOMAIN="${HY2_DOMAIN:-}" REALITY_SNI="${REALITY_SNI:-}" \
     REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}" REALITY_SHORT_ID="${REALITY_SHORT_ID:-}" \
     NODE_TAG="${NODE_NAME^^}" \
@@ -84,12 +101,14 @@ remnawave::_render() {
 }
 
 # The operator's own domains, as the subscription template routes them direct: the zone
-# of CDN_DOMAIN, which Timeweb wants as a subdomain, and any other domain outside it.
+# of CDN_DOMAIN, which Timeweb wants as a subdomain, or of VLESS_DOMAIN without a CDN, and
+# any other domain outside it.
 remnawave::_own_domains() {
-  local zone="$CDN_DOMAIN" domain
+  local base="${CDN_DOMAIN:-${VLESS_DOMAIN:-}}" zone domain
   local -a own
-  if [[ "$CDN_DOMAIN" == *.*.* ]]; then
-    zone="${CDN_DOMAIN#*.}"
+  zone="$base"
+  if [[ "$base" == *.*.* ]]; then
+    zone="${base#*.}"
   fi
   own=("domain:$zone")
   for domain in "${VLESS_DOMAIN:-}" "${HY2_DOMAIN:-}"; do
@@ -122,23 +141,31 @@ remnawave::_check_sync() {
 # lists them.
 remnawave::_guide() {
   local out="${1#"$REPO_ROOT"/}" pause="$2" step=0 inbounds="" address bold="" reset=""
-  local tag="${NODE_NAME^^}" ip
-  local -a hosts
+  local tag="${NODE_NAME^^}" ip title own_profile="" hosts_file=""
+  local -a hosts=()
   # The colours follow stderr; a guide sent to a file stays plain.
   if [[ -t 1 ]]; then
     bold="$UI_BOLD" reset="$UI_RESET"
   fi
   if [[ -n "${REALITY_SNI:-}" ]]; then
-    inbounds+="$(t 'VLESS-REALITY-%s on :443/tcp' "$tag"), "
+    inbounds="$(t 'VLESS-REALITY-%s on :443/tcp' "$tag")"
   fi
-  inbounds+="$(t 'VLESS-XHTTP-CDN-%s on 127.0.0.1:%s' "$tag" "$XHTTP_PORT")"
+  if env::has_cdn; then
+    inbounds+="${inbounds:+, }$(t 'VLESS-XHTTP-CDN-%s on 127.0.0.1:%s' "$tag" "$XHTTP_PORT")"
+  fi
   if [[ -n "${HY2_DOMAIN:-}" ]]; then
-    inbounds+=", $(t 'HYSTERIA2-%s on :443/udp' "$tag")"
+    inbounds+="${inbounds:+, }$(t 'HYSTERIA2-%s on :443/udp' "$tag")"
   fi
   ip="${ORIGIN_IP:-$(t '<IP of this server>')}"
   address="${VLESS_DOMAIN:-$ip}"
-  hosts=("$(t 'CDN: inbound VLESS-XHTTP-CDN-%s, address %s, port 443. Advanced: SNI and host %s, path %s, security TLS, extra <- %s/host-xhttp-extra.json' \
-    "$tag" "$CDN_DOMAIN" "$CDN_DOMAIN" "$XHTTP_PATH" "$out")")
+  title="$(t 'Remnawave panel, step by step.')"
+  if env::has_cdn; then
+    title="$(t 'Remnawave panel and the CDN resource, step by step.')"
+    own_profile="$(t 'The node keeps a profile of its own? Put only %s/inbound-xhttp-cdn.json into its "inbounds".' "$out")"
+    hosts_file="$REPO_ROOT/$out/host-xhttp-extra.json"
+    hosts+=("$(t 'CDN: inbound VLESS-XHTTP-CDN-%s, address %s, port 443. Advanced: SNI and host %s, path %s, security TLS, extra <- %s/host-xhttp-extra.json' \
+      "$tag" "$CDN_DOMAIN" "$CDN_DOMAIN" "$XHTTP_PATH" "$out")")
+  fi
   if [[ -n "${REALITY_SNI:-}" ]]; then
     hosts+=("$(t 'Reality: inbound VLESS-REALITY-%s, address %s, port 443' "$tag" "$address")")
   fi
@@ -146,13 +173,11 @@ remnawave::_guide() {
     hosts+=("$(t 'Hysteria2: inbound HYSTERIA2-%s, address %s, port 443. Advanced: SNI %s' "$tag" "$HY2_DOMAIN" "$HY2_DOMAIN")")
   fi
 
-  printf '\n%s%s%s %s\n' "$bold" "$(t 'Remnawave panel and the CDN resource, step by step.')" "$reset" \
-    "$(t 'The files are in %s/.' "$out")"
+  printf '\n%s%s%s %s\n' "$bold" "$title" "$reset" "$(t 'The files are in %s/.' "$out")"
   # Profile names are unique in the panel too, so the node name serves as one.
   remnawave::_step "$REPO_ROOT/$out/config-profile.json" "$(t 'Config profile')" \
     "$(t 'Config Profiles -> Create Config Profile -> the name %s -> paste %s/config-profile.json -> Save.' "$tag" "$out")" \
-    "$(t 'Inbounds: %s.' "$inbounds")" \
-    "$(t 'The node keeps a profile of its own? Put only %s/inbound-xhttp-cdn.json into its "inbounds".' "$out")"
+    "$(t 'Inbounds: %s.' "$inbounds")" "$own_profile"
   # The panel asks for the profile when it creates a node, so the node comes second. Its
   # questions take the place of the wait.
   remnawave::_print "$(t 'Node')" \
@@ -164,14 +189,16 @@ remnawave::_guide() {
     "$(t 'Internal Squads -> the squad of your users (Default-Squad) -> turn the new inbounds on -> Save.')"
   remnawave::_step "$REPO_ROOT/$out/subscription-xray-json.json" "$(t 'Subscription template')" \
     "$(t 'Templates -> Xray JSON -> a new template -> paste %s/subscription-xray-json.json -> Save.' "$out")"
-  remnawave::_step "$REPO_ROOT/$out/host-xhttp-extra.json" \
+  remnawave::_step "$hosts_file" \
     "$(t 'Hosts: Hosts -> Create new host, one per inbound; Advanced -> Xray JSON template: the one from step 4')" \
     "${hosts[@]}"
-  remnawave::_step "" "$(t 'CDN resource (Timeweb)')" \
-    "$(t 'Source: %s:%s, HTTPS for the source on.' "$ip" "${NGINX_TLS_PORT:-8444}")" \
-    "$(t "Distribution domain %s: a CNAME to the technical domain of the resource (*.cdn.twcstorage.ru), then Let's Encrypt in the Timeweb panel." "$CDN_DOMAIN")" \
-    "$(t 'Caching stays on; ignoring cache headers, always online and large file acceleration stay off.')"
-  printf '\n%s\n' "$(t 'Obfuscation fields stay identical in the inbound and the host extra (remnawave/README.md).')"
+  if env::has_cdn; then
+    remnawave::_step "" "$(t 'CDN resource (Timeweb)')" \
+      "$(t 'Source: %s:%s, HTTPS for the source on.' "$ip" "${NGINX_TLS_PORT:-8444}")" \
+      "$(t "Distribution domain %s: a CNAME to the technical domain of the resource (*.cdn.twcstorage.ru), then Let's Encrypt in the Timeweb panel." "$CDN_DOMAIN")" \
+      "$(t 'Caching stays on; ignoring cache headers, always online and large file acceleration stay off.')"
+    printf '\n%s\n' "$(t 'Obfuscation fields stay identical in the inbound and the host extra (remnawave/README.md).')"
+  fi
 }
 
 # Prints a step, then waits per remnawave::_guide. FILE, when the step pastes one into the

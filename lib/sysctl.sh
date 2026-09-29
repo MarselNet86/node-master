@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Kernel network tuning and open-file limits (tech.md §5, §6): installs
-# templates/sysctl-99-cdn.conf into /etc/sysctl.d/, applies it, raises nofile for nginx
-# and for login sessions. Checks the values the kernel ends up with.
+# templates/sysctl-99-cdn.conf into /etc/sysctl.d/, reserves the xhttp and origin ports
+# when there is a CDN, applies it, raises nofile for nginx and for login sessions. Checks
+# the values the kernel ends up with.
 
 set -euo pipefail
 
@@ -19,12 +20,19 @@ readonly SYSCTL_NOFILE=65535
 sysctl::apply() {
   local changed=0 restart=0 backlog
   require::cmd sysctl systemctl
-  env::require XHTTP_PORT NGINX_TLS_PORT
   mkdir -p "$SYSROOT${SYSCTL_CONF%/*}" "$SYSROOT${SYSCTL_NGINX_DROPIN%/*}" "$SYSROOT${SYSCTL_LIMITS%/*}"
   fs::write "$SYSROOT$SYSCTL_CONF" 644 "$(<"$REPO_ROOT/templates/sysctl-99-cdn.conf")"
   changed=$((changed | FS_CHANGED))
-  fs::write "$SYSROOT$SYSCTL_RESERVED" 644 "$(sysctl::_reserved_ports)"
-  changed=$((changed | FS_CHANGED))
+  if env::has_cdn; then
+    env::require XHTTP_PORT NGINX_TLS_PORT
+    fs::write "$SYSROOT$SYSCTL_RESERVED" 644 "$(sysctl::_reserved_ports)"
+    changed=$((changed | FS_CHANGED))
+  elif [[ -e "$SYSROOT$SYSCTL_RESERVED" ]]; then
+    # Reality and Hysteria2 take 443, below the ephemeral range. The kernel keeps the old
+    # reservation until a reboot, which holds nothing back.
+    rm -f "$SYSROOT$SYSCTL_RESERVED"
+    log::info "$(t 'removed %s: without CDN_DOMAIN there are no xhttp and origin ports to reserve' "$SYSCTL_RESERVED")"
+  fi
 
   if ((changed)) || ! sysctl::_in_effect quiet; then
     log::info "$(t 'applying kernel settings: sysctl --system')"
@@ -87,6 +95,10 @@ EOF
 # setting that differs and why that usually happens.
 sysctl::_in_effect() {
   local mode="$1" key want have ok=0
+  local -a files=("$SYSROOT$SYSCTL_CONF")
+  if [[ -e "$SYSROOT$SYSCTL_RESERVED" ]]; then
+    files+=("$SYSROOT$SYSCTL_RESERVED")
+  fi
   while IFS='=' read -r key want; do
     key="${key//[[:space:]]/}"
     want="$(sysctl::_norm "$key" "$want")"
@@ -97,7 +109,7 @@ sysctl::_in_effect() {
         log::warn "$(t '%s is %s, not %s: %s' "$key" "${have:-$(t '<empty>')}" "$want" "$(sysctl::_hint "$key")")"
       fi
     fi
-  done < <(sed -E '/^[[:space:]]*(#|$)/d' "$SYSROOT$SYSCTL_CONF" "$SYSROOT$SYSCTL_RESERVED")
+  done < <(sed -E '/^[[:space:]]*(#|$)/d' "${files[@]}")
   return "$ok"
 }
 

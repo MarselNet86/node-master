@@ -176,6 +176,37 @@ host_extra() {
     "$OUT/config-profile.json"
 }
 
+@test "without a CDN the profile holds Reality and Hysteria2 only, and the guide skips the CDN" {
+  full_node
+  CDN_DOMAIN="" emit
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '[.inbounds[].tag]' "$OUT/config-profile.json")" = '["VLESS-REALITY-NODE1","HYSTERIA2-NODE1"]' ]
+  [ ! -e "$OUT/host-xhttp-extra.json" ]
+  [ ! -e "$OUT/inbound-xhttp-cdn.json" ]
+  [[ "$output" == *"Remnawave panel, step by step."* ]]
+  [[ "$output" == *"Inbounds: VLESS-REALITY-NODE1 on :443/tcp, HYSTERIA2-NODE1 on :443/udp."* ]]
+  [[ "$output" == *"Reality: inbound VLESS-REALITY-NODE1, address vless.example.com, port 443"* ]]
+  [[ "$output" != *XHTTP* && "$output" != *"CDN resource (Timeweb)"* && "$output" != *"Obfuscation fields"* ]]
+}
+
+@test "dropping the CDN takes the CDN files of an earlier run out of out/remnawave" {
+  full_node
+  emit
+  [ "$status" -eq 0 ]
+  [ -e "$OUT/host-xhttp-extra.json" ]
+  CDN_DOMAIN="" emit
+  [ "$status" -eq 0 ]
+  [ ! -e "$OUT/host-xhttp-extra.json" ]
+  [ ! -e "$OUT/inbound-xhttp-cdn.json" ]
+  grep -qF "removed $OUT/host-xhttp-extra.json: no CDN_DOMAIN" "$TMP/stderr"
+}
+
+@test "without a CDN the subscription template routes the zone of VLESS_DOMAIN direct" {
+  VLESS_DOMAIN=nl1.example.net HY2_DOMAIN=hy.example.org CDN_DOMAIN="" emit
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '.routing.rules[1].domain' "$OUT/subscription-xray-json.json")" = '["domain:example.net","domain:hy.example.org"]' ]
+}
+
 @test "the xhttp inbound takes the client address from nginx's X-Forwarded-For" {
   emit
   [ "$status" -eq 0 ]

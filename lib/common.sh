@@ -238,6 +238,11 @@ readonly -a ENV_SECRET_KEYS=(REALITY_PRIVATE_KEY NODE_SECRET_KEY)
 
 env::is_secret() { env::_contains "$1" "${ENV_SECRET_KEYS[@]}"; }
 
+# Whether the node takes clients through the CDN. Without CDN_DOMAIN the profile has no
+# xhttp inbound, and the origin site of nginx, the reserved ports and the check of the CDN
+# chain have nothing to serve.
+env::has_cdn() { [[ -n "${CDN_DOMAIN:-}" ]]; }
+
 # Loads KEY=VALUE lines into exported variables (envsubst reads the environment)
 # without executing the file. Values are literal: one pair of matching quotes is
 # stripped, and in an unquoted value a # at the start or after a space opens a comment.

@@ -26,6 +26,7 @@ setup() {
   kernel net.core.default_qdisc fq_codel
   kernel net.ipv4.tcp_congestion_control cubic
   kernel net.ipv4.ip_local_reserved_ports ""
+  CDN_DOMAIN=cdn.example.com
   XHTTP_PORT=4443
   NGINX_TLS_PORT=8444
   CONF="$ROOT/etc/sysctl.d/99-cdn.conf"
@@ -119,6 +120,21 @@ calls() {
   [ "$status" -eq 0 ]
   grep -qxF 'net.ipv4.ip_local_reserved_ports = 4443,8444' "$ROOT/etc/sysctl.d/99-cdn-reserved-ports.conf"
   [ "$(cat "$TMP/kernel/net.ipv4.ip_local_reserved_ports")" = 4443,8444 ]
+}
+
+@test "without a CDN no port is reserved, and the reservation of an earlier run goes" {
+  local reserved="$ROOT/etc/sysctl.d/99-cdn-reserved-ports.conf"
+  CDN_DOMAIN="" run sysctl::apply
+  [ "$status" -eq 0 ]
+  [ ! -e "$reserved" ]
+  [ -z "$(cat "$TMP/kernel/net.ipv4.ip_local_reserved_ports")" ]
+  [[ "$output" != *"ip_local_reserved_ports"* ]]
+  run sysctl::apply
+  [ -e "$reserved" ]
+  CDN_DOMAIN="" run sysctl::apply
+  [ "$status" -eq 0 ]
+  [ ! -e "$reserved" ]
+  [[ "$output" == *"removed /etc/sysctl.d/99-cdn-reserved-ports.conf: without CDN_DOMAIN"* ]]
 }
 
 @test "a rerun with the settings in effect changes nothing" {

@@ -127,13 +127,40 @@ invalid() {
   [ -z "$REALITY_SNI" ]
 }
 
-@test "empty input repeats the question for CDN_DOMAIN" {
-  collect vless.example.com hy2.example.com "" cdn.example.com 203.0.113.10 "" "" "" "" ""
+@test "Enter on CDN_DOMAIN leaves the CDN out, and its three questions with it" {
+  ui::enable
+  collect vless.example.com hy2.example.com "" 203.0.113.10
   [ "$status" -eq 0 ]
-  [ "$(grep -c 'WARN.*_DOMAIN: expected a domain name' <<<"$output")" -eq 1 ]
-  [[ "$output" == *"CDN_DOMAIN: expected a domain name"* ]]
+  [[ "$output" == *$'\e[2m 3/13\e[0m  \e[1mDomain of the CDN resource'* ]]
+  [[ "$output" == *$'\e[2m 4/10\e[0m  \e[1mPublic IPv4 of this server'* ]]
+  [[ "$output" == *$'\e[2m10/10\e[0m  \e[1mShort name of this node for the panel'* ]]
+  [[ "$output" != *XHTTP_PORT* && "$output" != *XHTTP_PATH* && "$output" != *NGINX_TLS_PORT* ]]
   env::load "$ENV_FILE"
-  [ "$CDN_DOMAIN" = cdn.example.com ]
+  [ -z "$CDN_DOMAIN" ]
+  # The xhttp settings stay for a later run with a CDN.
+  [ "$XHTTP_PORT" = 4443 ]
+  [ "$XHTTP_PATH" = /api/v2.jpg/ ]
+  [ "$NGINX_TLS_PORT" = 8444 ]
+}
+
+@test "- clears CDN_DOMAIN kept in .env" {
+  fresh
+  [ "$status" -eq 0 ]
+  collect "" "" -
+  [ "$status" -eq 0 ]
+  env::load "$ENV_FILE"
+  [ -z "$CDN_DOMAIN" ]
+  [ "$HY2_DOMAIN" = hy2.example.com ]
+}
+
+@test "without the CDN and Hysteria2, Reality cannot go: the profile needs an inbound" {
+  collect vless.example.com - - 203.0.113.10 "" - www.swiss.com
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[WARN] REALITY_SNI: required without CDN_DOMAIN and HY2_DOMAIN: the profile needs at least one inbound"* ]]
+  env::load "$ENV_FILE"
+  [ -z "$HY2_DOMAIN" ]
+  [ -z "$CDN_DOMAIN" ]
+  [ "$REALITY_SNI" = www.swiss.com ]
 }
 
 @test "a server that already runs Hysteria2 skips it and gets no node restart question" {
@@ -214,8 +241,8 @@ invalid() {
   ui::enable
   fresh
   [ "$status" -eq 0 ]
-  first=$'\n  \e[2m 1/13\e[0m  \e[1mDomain of this server for origin nginx and direct VLESS\e[0m\n'
-  first+=$'         \e[2man A record to this server, port 80 open: Let\'s Encrypt checks it over HTTP\e[0m\n'
+  first=$'\n  \e[2m 1/13\e[0m  \e[1mDomain of this server for direct VLESS and origin nginx\e[0m\n'
+  first+=$'         \e[2man A record to this server; with a CDN, port 80 open: Let\'s Encrypt checks it over HTTP\e[0m\n'
   first+=$'         \e[36mVLESS_DOMAIN\e[0m \e[2m\xe2\x80\xba\e[0m '
   [[ "$output" == *"$first"* ]]
   [[ "$output" == *$'\e[36mXHTTP_PORT\e[0m \e[2m[4443] \xe2\x80\xba\e[0m '* ]]
@@ -243,14 +270,15 @@ invalid() {
   refused=$'\n       \e[31m\xe2\x9c\x97 expected a domain name like vless.example.com; it holds \'_\' at 6\e[0m\n'
   refused+=$'         \e[36mVLESS_DOMAIN\e[0m '
   [[ "$output" == *"$refused"* ]]
-  [ "$(grep -c 'Domain of this server for origin nginx and direct VLESS' <<<"$output")" -eq 1 ]
+  [ "$(grep -c 'Domain of this server for direct VLESS and origin nginx' <<<"$output")" -eq 1 ]
   [[ "$output" != *"[WARN] VLESS_DOMAIN"* ]]
 }
 
 @test "input that ends before a required answer exits 2 and writes nothing" {
   collect vless.example.com hy2.example.com
   [ "$status" -eq 2 ]
-  [[ "$output" == *"CDN_DOMAIN: expected a domain name"* ]]
+  # CDN_DOMAIN may stay empty; ORIGIN_IP, which the curl stub cannot detect, may not.
+  [[ "$output" == *"ORIGIN_IP: expected an IPv4 address"* ]]
   [ ! -e "$ENV_FILE" ]
 }
 
@@ -404,18 +432,19 @@ EOF
   valid VLESS_DOMAIN vless.example.com
   valid HY2_DOMAIN vless.example.com hy2.example.com
   invalid VLESS_DOMAIN localhost vless_example.com
-  valid CDN_DOMAIN cdn.example.com
-  invalid CDN_DOMAIN "" vless.example.com hy2.example.com
+  valid CDN_DOMAIN cdn.example.com ""
+  invalid CDN_DOMAIN vless.example.com hy2.example.com
   CDN_DOMAIN=cdn.example.com
   invalid VLESS_DOMAIN cdn.example.com
   invalid HY2_DOMAIN cdn.example.com
 }
 
-@test "prompt::validate: HY2_DOMAIN may stay empty, VLESS_DOMAIN may not" {
+@test "prompt::validate: HY2_DOMAIN and CDN_DOMAIN may stay empty, VLESS_DOMAIN may not" {
   valid HY2_DOMAIN ""
+  valid CDN_DOMAIN ""
   invalid VLESS_DOMAIN ""
   run prompt::validate VLESS_DOMAIN ""
-  [ "$output" = "required: a domain of this server with an A record, origin nginx serves its certificate" ]
+  [ "$output" = "required: a domain of this server with an A record, for the Reality host and origin nginx" ]
 }
 
 @test "prompt::validate: ports stay off 443 and off each other" {
@@ -443,8 +472,13 @@ EOF
 }
 
 @test "prompt::validate: the Reality site, key and short id" {
-  valid REALITY_SNI www.swiss.com ""
-  invalid REALITY_SNI localhost "www.swiss.com:443"
+  valid REALITY_SNI www.swiss.com
+  # No Reality leaves the profile to the CDN or Hysteria2, and it needs one of them.
+  CDN_DOMAIN=cdn.example.com valid REALITY_SNI ""
+  HY2_DOMAIN=hy2.example.com valid REALITY_SNI ""
+  invalid REALITY_SNI localhost "www.swiss.com:443" ""
+  run prompt::validate REALITY_SNI ""
+  [ "$output" = "required without CDN_DOMAIN and HY2_DOMAIN: the profile needs at least one inbound" ]
   valid REALITY_PRIVATE_KEY c3ludGhldGljLXJlYWxpdHkta2V5LWZvci10ZXN0cyE
   invalid REALITY_PRIVATE_KEY "" short "c3ludGhldGljLXJlYWxpdHkta2V5LWZvci10ZXN0c+E"
   valid REALITY_SHORT_ID 1a2b3c4d5e6f7a8b ab
@@ -492,11 +526,12 @@ EOF
   [ "$output" = 5002 ]
 }
 
-@test "prompt::validate: NODE_PORT stays off 443 and the ports of xray and nginx" {
+@test "prompt::validate: NODE_PORT stays off 443 and, with a CDN, the ports of xray and nginx" {
   XHTTP_PORT=4443
   NGINX_TLS_PORT=8444
-  valid NODE_PORT 2222 1 65535
-  invalid NODE_PORT "" 0 65536 abc 443 4443 8444
+  valid NODE_PORT 2222 1 65535 4443 8444
+  invalid NODE_PORT "" 0 65536 abc 443
+  CDN_DOMAIN=cdn.example.com invalid NODE_PORT 4443 8444
 }
 
 @test "prompt::node asks nothing when .env holds the key, and gives up without key or terminal" {

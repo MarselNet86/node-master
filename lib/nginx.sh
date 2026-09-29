@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # Origin nginx for the CDN edge (tech.md §5, §6): renders templates/ into /etc/nginx/,
 # enables the site, drops the stock default site, applies the result only after nginx -t.
+# A node without CDN_DOMAIN gets the main config and no site.
 
 set -euo pipefail
 
@@ -20,23 +21,28 @@ readonly NGINX_SITE=/etc/nginx/sites-available/cdn-deploy.conf
 readonly NGINX_SITE_LINK=/etc/nginx/sites-enabled/cdn-deploy.conf
 readonly NGINX_DEFAULT_LINK=/etc/nginx/sites-enabled/default
 
-# Renders both templates and applies them, and returns only once nginx serves the result.
-# A config that nginx -t rejects, or that nginx does not put into service after the
-# reload, is rolled back, so the previous one keeps serving (exit 7).
+# Renders the templates and applies them. With the CDN it returns only once nginx serves
+# the origin site; a config that nginx -t rejects, or that nginx does not put into service
+# after the reload, is rolled back, so the previous one keeps serving (exit 7). Without the
+# CDN nginx gets the main config and no site: it only opens :80 for the certificates.
 nginx::render() {
-  local cert_dir main site id saved changed=0
+  local cert_dir="" main site="" id="" saved changed=0
   require::cmd nginx envsubst curl
-  env::require CDN_DOMAIN XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT VLESS_DOMAIN
-  cert_dir="$(nginx::_cert_dir)"
-  if [[ ! -r "$SYSROOT$cert_dir/fullchain.pem" || ! -r "$SYSROOT$cert_dir/privkey.pem" ]]; then
-    log::die "$EXIT_NGINX" "$(t 'no certificate in %s: the certs step issues it, rerun ./deploy.sh' "$cert_dir")"
+  if env::has_cdn; then
+    env::require XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT VLESS_DOMAIN
+    cert_dir="$(nginx::_cert_dir)"
+    if [[ ! -r "$SYSROOT$cert_dir/fullchain.pem" || ! -r "$SYSROOT$cert_dir/privkey.pem" ]]; then
+      log::die "$EXIT_NGINX" "$(t 'no certificate in %s: the certs step issues it, rerun ./deploy.sh' "$cert_dir")"
+    fi
   fi
   main="$(nginx::_template nginx.conf.tmpl "$cert_dir" "")" || log::die "$EXIT_NGINX" "$(t 'cannot render %s' templates/nginx.conf.tmpl)"
-  site="$(nginx::_template site-8444.conf.tmpl "$cert_dir" "")" || log::die "$EXIT_NGINX" "$(t 'cannot render %s' templates/site-8444.conf.tmpl)"
-  # The id names this exact render; nginx serves it on the loopback, which shows whether
-  # the running config is this one.
-  id="$(printf '%s\n%s\n' "$main" "$site" | sha256sum | cut -c1-16)"
-  site="$(nginx::_template site-8444.conf.tmpl "$cert_dir" "$id")" || log::die "$EXIT_NGINX" "$(t 'cannot render %s' templates/site-8444.conf.tmpl)"
+  if env::has_cdn; then
+    site="$(nginx::_template site-8444.conf.tmpl "$cert_dir" "")" || log::die "$EXIT_NGINX" "$(t 'cannot render %s' templates/site-8444.conf.tmpl)"
+    # The id names this exact render; nginx serves it on the loopback, which shows whether
+    # the running config is this one.
+    id="$(printf '%s\n%s\n' "$main" "$site" | sha256sum | cut -c1-16)"
+    site="$(nginx::_template site-8444.conf.tmpl "$cert_dir" "$id")" || log::die "$EXIT_NGINX" "$(t 'cannot render %s' templates/site-8444.conf.tmpl)"
+  fi
 
   mkdir -p "$SYSROOT${NGINX_SITE%/*}" "$SYSROOT${NGINX_SITE_LINK%/*}"
   saved="$(mktemp -d)"
@@ -44,10 +50,17 @@ nginx::render() {
   nginx::_keep_stock_conf
   fs::write "$SYSROOT$NGINX_CONF" 644 "$main"
   changed=$((changed | FS_CHANGED))
-  fs::write "$SYSROOT$NGINX_SITE" 644 "$site"
-  changed=$((changed | FS_CHANGED))
-  if [[ "$(readlink "$SYSROOT$NGINX_SITE_LINK" || true)" != "$NGINX_SITE" ]]; then
-    ln -sfn "$NGINX_SITE" "$SYSROOT$NGINX_SITE_LINK"
+  if env::has_cdn; then
+    fs::write "$SYSROOT$NGINX_SITE" 644 "$site"
+    changed=$((changed | FS_CHANGED))
+    if [[ "$(readlink "$SYSROOT$NGINX_SITE_LINK" || true)" != "$NGINX_SITE" ]]; then
+      ln -sfn "$NGINX_SITE" "$SYSROOT$NGINX_SITE_LINK"
+      changed=1
+    fi
+  elif [[ -e "$SYSROOT$NGINX_SITE" || -e "$SYSROOT$NGINX_SITE_LINK" || -L "$SYSROOT$NGINX_SITE_LINK" ]]; then
+    # A node that dropped the CDN: the origin site would keep :8444 open for nobody.
+    rm -f "$SYSROOT$NGINX_SITE_LINK" "$SYSROOT$NGINX_SITE"
+    log::info "$(t 'removed %s: no CDN_DOMAIN' "$NGINX_SITE")"
     changed=1
   fi
   if [[ -e "$SYSROOT$NGINX_DEFAULT_LINK" || -L "$SYSROOT$NGINX_DEFAULT_LINK" ]]; then
@@ -56,6 +69,10 @@ nginx::render() {
     changed=1
   fi
 
+  if ! env::has_cdn; then
+    nginx::_apply_bare "$saved" "$changed"
+    return 0
+  fi
   if ((changed == 0)) && nginx::_serves "$id" 1 1; then
     rm -rf "$saved"
     log::info "$(t 'nginx config is up to date and serving')"
@@ -76,6 +93,30 @@ nginx::render() {
   fi
   rm -rf "$saved"
   log::info "$(t 'nginx serves the new config')"
+}
+
+# Applies a config without the origin site, with the backup in SAVED. No site serves an
+# id, so a reload that nginx takes is as far as the check goes.
+nginx::_apply_bare() {
+  local saved="$1" changed="$2"
+  if ((changed == 0)); then
+    rm -rf "$saved"
+    log::info "$(t 'nginx config is up to date, without an origin site: no CDN_DOMAIN')"
+    return 0
+  fi
+  if ! nginx -t >&2; then
+    nginx::_restore "$saved"
+    rm -rf "$saved"
+    log::die "$EXIT_NGINX" "$(t 'nginx -t rejects the rendered config, the previous one stays: see the errors above')"
+  fi
+  if ! nginx::reload; then
+    nginx::_restore "$saved"
+    rm -rf "$saved"
+    nginx::reload || true
+    log::die "$EXIT_NGINX" "$(t 'nginx did not take the new config, the previous one stays: see /var/log/nginx/error.log')"
+  fi
+  rm -rf "$saved"
+  log::info "$(t 'nginx took the new config, without an origin site: no CDN_DOMAIN')"
 }
 
 # Reloads nginx, or starts it when it is down. nginx -s reload prints a notice even on
@@ -107,10 +148,10 @@ nginx::_cert_dir() {
 # Renders templates/NAME with the cert directory CERT_DIR and the config id CONFIG_ID.
 # Only the listed placeholders change, so nginx variables such as $request_method stay.
 nginx::_template() {
-  local name="$1" bare="${XHTTP_PATH%/}" names="$CDN_DOMAIN $VLESS_DOMAIN" out
+  local name="$1" path="${XHTTP_PATH:-}" names="${CDN_DOMAIN:-} ${VLESS_DOMAIN:-}" out
   # shellcheck disable=SC2016  # envsubst takes the placeholder list literally
-  out="$(XHTTP_PORT="$XHTTP_PORT" XHTTP_PATH="$XHTTP_PATH" XHTTP_PATH_BARE="$bare" \
-    NGINX_TLS_PORT="$NGINX_TLS_PORT" CDN_DOMAIN="$CDN_DOMAIN" SERVER_NAMES="$names" \
+  out="$(XHTTP_PORT="${XHTTP_PORT:-}" XHTTP_PATH="$path" XHTTP_PATH_BARE="${path%/}" \
+    NGINX_TLS_PORT="${NGINX_TLS_PORT:-}" CDN_DOMAIN="${CDN_DOMAIN:-}" SERVER_NAMES="$names" \
     ORIGIN_CERT_DIR="$2" CONFIG_ID="$3" \
     envsubst '${XHTTP_PORT} ${XHTTP_PATH} ${XHTTP_PATH_BARE} ${NGINX_TLS_PORT} ${CDN_DOMAIN} ${SERVER_NAMES} ${ORIGIN_CERT_DIR} ${CONFIG_ID}' \
     <"$REPO_ROOT/templates/$name")"

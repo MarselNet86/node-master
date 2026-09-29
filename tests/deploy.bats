@@ -56,7 +56,9 @@ step_line() {
   has_line '^ +XHTTP_PORT +4443$'
   has_line '^ +XHTTP_PATH +/api/v2\.jpg/$'
   has_line '^ +NGINX_TLS_PORT +8444$'
-  has_line 'nginx .*:8444 <CDN_DOMAIN> \(certificate of <VLESS_DOMAIN>\) -> 127\.0\.0\.1:4443'
+  # The .env.example defaults leave the CDN out: the plan has no origin site.
+  has_line '^ +CDN_DOMAIN +<unset>$'
+  has_line 'nginx .*no origin site without CDN_DOMAIN'
   has_line '^ +NODE_PORT +2222$'
   has_line '^ +NODE_SECRET_KEY +<unset>$'
   has_line 'remnawave .*start the node from /opt/remnanode/docker-compose\.yml with its SECRET_KEY, installing Docker'
@@ -113,6 +115,31 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$(step_line certs)" == *"via HTTP-01 on :80: vless.example.com; skip"* ]]
   [[ "$(step_line renew-hook)" == *"no node restart: HY2_DOMAIN is not set"* ]]
+}
+
+@test "--dry-run plans a node without a CDN: no origin site, no reserved ports, layer 1 on :443" {
+  printf 'VLESS_DOMAIN=vless.example.com\nHY2_DOMAIN=hy2.example.com\nORIGIN_IP=203.0.113.10\n' >"$REPO/.env"
+  deploy --dry-run
+  [ "$status" -eq 0 ]
+  # Reality and Hysteria2 give the profile its inbounds. Without root the plan still warns
+  # that a real run needs it.
+  [[ "$(cat "$TMP/stderr")" != *"no inbound to set up"* ]]
+  # Only Hysteria2 needs a certificate: origin nginx, which takes the one of VLESS_DOMAIN,
+  # has no site without the CDN.
+  [[ "$(step_line certs)" == *"via HTTP-01 on :80: hy2.example.com; skip"* ]]
+  [[ "$(step_line sysctl)" == *"no ports to reserve without CDN_DOMAIN"* ]]
+  [[ "$(step_line nginx)" == *"no origin site without CDN_DOMAIN"* ]]
+  [[ "$(step_line remnawave)" == *"for Reality, Hysteria2: config profile, Xray JSON template; walk"* ]]
+  [[ "$(step_line validate)" == *"xray listens on :443/tcp (Reality); without CDN_DOMAIN the CDN layers do not apply"* ]]
+}
+
+@test "--dry-run warns that a real run stops when the profile would have no inbound" {
+  printf 'VLESS_DOMAIN=vless.example.com\nORIGIN_IP=203.0.113.10\nREALITY_SNI=\n' >"$REPO/.env"
+  deploy --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$TMP/stderr")" == *"a real run stops here: no inbound to set up: set CDN_DOMAIN, REALITY_SNI or HY2_DOMAIN in $REPO/.env"* ]]
+  [[ "$(step_line certs)" == *"no certificate: neither CDN_DOMAIN nor HY2_DOMAIN is set"* ]]
+  [[ "$(step_line remnawave)" == *"for no inbound:"* ]]
 }
 
 @test "--dry-run warns that a real run stops without VLESS_DOMAIN" {
@@ -173,7 +200,7 @@ EOF
 @test "the packages step installs every command a module requires, beyond the base system" {
   local cmd pkg plan missing=""
   local -A from=([sysctl]=procps [systemctl]=base [certbot]=certbot [openssl]=openssl
-    [nginx]=nginx [envsubst]=gettext-base [curl]=curl [jq]=jq)
+    [nginx]=nginx [envsubst]=gettext-base [curl]=curl [jq]=jq [ss]=iproute2)
   deploy --dry-run
   plan="$(printf '%s\n' "$output" | sed -nE 's/.* packages +install missing: //p')"
   [ -n "$plan" ]

@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Post-install check from the bottom up (tech.md §5): xray on the loopback, origin nginx,
-# the xhttp path through nginx, then the CDN edge the way clients reach it. Stops at the
-# first broken layer with exit 8 and says what to fix there.
+# the xhttp path through nginx, then the CDN edge the way clients reach it. Without a CDN
+# only xray on the node remains to check. Stops at the first broken layer with exit 8 and
+# says what to fix there.
 
 set -euo pipefail
 
@@ -12,9 +13,16 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/node.sh"
 
 validate::layers() {
   require::cmd curl jq openssl
-  env::require CDN_DOMAIN XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT ORIGIN_IP
+  env::require ORIGIN_IP
+  if env::has_cdn; then
+    env::require XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT
+  fi
   validate::_origin_ip
   validate::_xray
+  if ! env::has_cdn; then
+    log::info "$(t 'without CDN_DOMAIN the CDN layers do not apply: origin nginx, xhttp path, CDN edge')"
+    return 0
+  fi
   validate::_origin
   validate::_xhttp
   validate::_cdn
@@ -23,20 +31,34 @@ validate::layers() {
 
 # --- layers -----------------------------------------------------------------------------
 
-# Layer 1: the inbound that the panel pushed listens on the loopback. A node that runs here
-# gets time to start xray, and a failure names its cause.
+# Layer 1: xray on the node runs the profile that the panel pushed. With the CDN the xhttp
+# inbound listens on the loopback; without it Reality on :443/tcp, else Hysteria2 on
+# :443/udp. xray starts every inbound of the profile or none, so one port tells. A node
+# that runs here gets time to start xray, and a failure names its cause.
 validate::_xray() {
-  local addrs
-  if ! validate::_listening "$XHTTP_PORT" && ! validate::_wait_node; then
-    validate::_fail 1 "$(t xray)" "$(t 'nothing listens on 127.0.0.1:%s: %s' "$XHTTP_PORT" "$(validate::_node_cause)")"
+  local proto=tcp port=443 tag where addrs
+  if env::has_cdn; then
+    port="$XHTTP_PORT" tag=VLESS-XHTTP-CDN where="127.0.0.1:$XHTTP_PORT"
+  elif [[ -n "${REALITY_SNI:-}" ]]; then
+    tag=VLESS-REALITY where=":443/tcp"
+  else
+    proto=udp tag=HYSTERIA2 where=":443/udp"
+    require::cmd ss
   fi
-  if command -v ss >/dev/null 2>&1; then
+  if ! validate::_up && ! validate::_wait_node; then
+    validate::_fail 1 "$(t xray)" "$(t 'nothing listens on %s: %s' "$where" "$(validate::_node_cause)")"
+  fi
+  if env::has_cdn && command -v ss >/dev/null 2>&1; then
     addrs="$(ss -Hltn "sport = :$XHTTP_PORT" 2>/dev/null | awk '{print $4}' || true)"
     if [[ -n "$addrs" ]] && grep -qvE '^127\.0\.0\.1:' <<<"$addrs"; then
       log::warn "$(t 'port %s listens beyond the loopback (%s): set listen 127.0.0.1 in the inbound, TLS ends on nginx' "$XHTTP_PORT" "$(paste -sd' ' <<<"$addrs")")"
     fi
   fi
-  log::info "$(t 'layer 1 (xray): 127.0.0.1:%s accepts connections' "$XHTTP_PORT")"
+  if [[ "$proto" == udp ]]; then
+    log::info "$(t 'layer 1 (xray): %s is open' "$where")"
+  else
+    log::info "$(t 'layer 1 (xray): %s accepts connections' "$where")"
+  fi
 }
 
 # Layer 2: origin nginx answers /cdn-check with 204 and its marker header.
@@ -106,15 +128,21 @@ validate::_cdn() {
   log::info "$(t 'layer 4 (CDN edge): https://%s/cdn-check gives 204 from this origin' "$CDN_DOMAIN")"
 }
 
-# ORIGIN_IP is where the CDN resource sends traffic, so it should point at this host.
+# ORIGIN_IP is the node address in the panel and where the CDN resource sends traffic, so
+# it should point at this host.
 validate::_origin_ip() {
   local public
   if hostname -I 2>/dev/null | tr ' ' '\n' | grep -qxF "$ORIGIN_IP"; then
     return 0
   fi
   public="$(curl -4 -fsS --max-time 5 https://ifconfig.me/ip 2>/dev/null || true)"
-  if [[ "$public" != "$ORIGIN_IP" ]]; then
+  if [[ "$public" == "$ORIGIN_IP" ]]; then
+    return 0
+  fi
+  if env::has_cdn; then
     log::warn "$(t 'ORIGIN_IP=%s is not an address of this host, whose public IPv4 is %s: the CDN resource may send traffic elsewhere' "$ORIGIN_IP" "${public:-unknown}")"
+  else
+    log::warn "$(t 'ORIGIN_IP=%s is not an address of this host, whose public IPv4 is %s: the node address in the panel may point elsewhere' "$ORIGIN_IP" "${public:-unknown}")"
   fi
 }
 
@@ -128,6 +156,16 @@ validate::_listening() {
   timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$1" 2>/dev/null
 }
 
+# Whether xray holds the PORT of layer 1 over PROTO, as validate::_xray sets them: a TCP
+# connection on the loopback, or a bound UDP socket.
+validate::_up() {
+  if [[ "${proto:-tcp}" == udp ]]; then
+    [[ -n "$(ss -Hlun "sport = :${port:-443}" 2>/dev/null || true)" ]]
+  else
+    validate::_listening "${port:-$XHTTP_PORT}"
+  fi
+}
+
 # The panel starts xray once it reaches a node, so a node container that runs here gets
 # CDN_DEPLOY_NODE_WAIT seconds (60; tests cut it) to open the port. A failure in its log
 # ends the wait.
@@ -136,11 +174,11 @@ validate::_wait_node() {
   if [[ "$(validate::_node_state)" != running ]]; then
     return 1
   fi
-  log::info "$(t 'waiting up to %ss for xray on the node to open 127.0.0.1:%s' "$wait" "$XHTTP_PORT")"
+  log::info "$(t 'waiting up to %ss for xray on the node to open %s' "$wait" "${where:-127.0.0.1:$XHTTP_PORT}")"
   while ((waited < wait)); do
     sleep 2
     waited=$((waited + 2))
-    if validate::_listening "$XHTTP_PORT"; then
+    if validate::_up; then
       return 0
     fi
     if [[ -n "$(validate::_node_error)" ]]; then
@@ -154,7 +192,7 @@ validate::_wait_node() {
 # certificate, an error in the node log, a stopped container, or a panel that has not
 # started the inbound.
 validate::_node_cause() {
-  local state error absent tag="VLESS-XHTTP-CDN${NODE_NAME:+-${NODE_NAME^^}}"
+  local state error absent inbound="${tag:-VLESS-XHTTP-CDN}${NODE_NAME:+-${NODE_NAME^^}}"
   state="$(validate::_node_state)"
   error="$(validate::_node_error)"
   absent="$(t 'no Docker')"
@@ -176,7 +214,7 @@ validate::_node_cause() {
     t 'the %s container is %s: docker logs %s says why' "$NODE_CONTAINER" "$state" "$NODE_CONTAINER"
   else
     t 'the node runs, but xray has no %s: check in the panel that the node is online (the panel reaches NODE_PORT %s) with this inbound on, rerun ./deploy.sh' \
-      "$tag" "${NODE_PORT:-2222}"
+      "$inbound" "${NODE_PORT:-2222}"
   fi
 }
 

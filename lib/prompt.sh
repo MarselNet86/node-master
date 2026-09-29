@@ -99,19 +99,18 @@ prompt::_asks() {
     NODE_PORT | NODE_SECRET_KEY) return 1 ;;
     # prompt::language asks for it before the survey.
     UI_LANG) return 1 ;;
+    # The restart makes the node load a renewed HY2_DOMAIN certificate.
     NODE_RELOAD_CMD) by=HY2_DOMAIN ;;
+    # Without REALITY_SNI there is no Reality inbound.
     REALITY_PRIVATE_KEY | REALITY_SHORT_ID) by=REALITY_SNI ;;
+    # Without CDN_DOMAIN there is no xhttp inbound and no origin site.
+    XHTTP_PORT | XHTTP_PATH | NGINX_TLS_PORT) by=CDN_DOMAIN ;;
     *) return 0 ;;
   esac
   if [[ "$pending" == *" $by "* ]]; then
     return 0
   fi
-  case "$key" in
-    # The restart makes the node load a renewed HY2_DOMAIN certificate.
-    NODE_RELOAD_CMD) [[ -n "${HY2_DOMAIN:-}" ]] ;;
-    # Without REALITY_SNI there is no Reality inbound.
-    *) [[ -n "${REALITY_SNI:-}" ]] ;;
-  esac
+  [[ -n "${!by:-}" ]]
 }
 
 # Numbers the question for KEY in UI_NUMBER, as "3/14". KEY and the keys after it are
@@ -139,12 +138,12 @@ prompt::validate() {
   case "$key" in
     VLESS_DOMAIN | HY2_DOMAIN | CDN_DOMAIN)
       sample="${key%%_*}"
-      # Hysteria2 is optional: a server that already runs it adds only the CDN. VLESS_DOMAIN
-      # is not: HTTP-01 issues the certificate of origin nginx for it.
-      if [[ -z "$value" && "$key" == HY2_DOMAIN ]]; then
+      # Hysteria2 and the CDN are optional: an empty domain leaves the inbound out of the
+      # profile. VLESS_DOMAIN is not: the Reality host and origin nginx take it.
+      if [[ -z "$value" && "$key" != VLESS_DOMAIN ]]; then
         :
-      elif [[ -z "$value" && "$key" == VLESS_DOMAIN ]]; then
-        reason="$(t 'required: a domain of this server with an A record, origin nginx serves its certificate')"
+      elif [[ -z "$value" ]]; then
+        reason="$(t 'required: a domain of this server with an A record, for the Reality host and origin nginx')"
       elif ! is::fqdn "$value"; then
         reason="$(t 'expected a domain name like %s.example.com%s' "${sample,,}" "$(prompt::_foreign_chars "$value")")"
       elif [[ "$key" == CDN_DOMAIN &&
@@ -187,6 +186,8 @@ prompt::validate() {
     REALITY_SNI)
       if [[ -n "$value" ]] && ! is::fqdn "$value"; then
         reason="$(t 'expected a domain name like www.swiss.com, or - for no Reality%s' "$(prompt::_foreign_chars "$value")")"
+      elif [[ -z "$value" && -z "${HY2_DOMAIN:-}" ]] && ! env::has_cdn; then
+        reason="$(t 'required without CDN_DOMAIN and HY2_DOMAIN: the profile needs at least one inbound')"
       fi
       ;;
     REALITY_PRIVATE_KEY)
@@ -204,7 +205,8 @@ prompt::validate() {
     NODE_PORT)
       if ! is::port "$value"; then
         reason="$(t 'expected a port from 1 to 65535, NODE_PORT in the docker-compose.yml of the panel')"
-      elif [[ "$value" == 443 || "$value" == "${XHTTP_PORT:-}" || "$value" == "${NGINX_TLS_PORT:-}" ]]; then
+      elif [[ "$value" == 443 ]] ||
+        { env::has_cdn && [[ "$value" == "${XHTTP_PORT:-}" || "$value" == "${NGINX_TLS_PORT:-}" ]]; }; then
         reason="$(t 'must differ from 443, XHTTP_PORT and NGINX_TLS_PORT: xray and nginx listen there')"
       fi
       ;;
@@ -243,7 +245,7 @@ prompt::_node_key_problem() {
 prompt::_normalize() {
   local key="$1" value="$2"
   case "$key" in
-    VLESS_DOMAIN | HY2_DOMAIN | LE_EMAIL | REALITY_SNI)
+    VLESS_DOMAIN | HY2_DOMAIN | CDN_DOMAIN | LE_EMAIL | REALITY_SNI)
       if [[ "$value" == - ]]; then
         value=""
       fi
@@ -339,10 +341,10 @@ prompt::_bytes() {
 # Prints the question for KEY and, after a |, its hint.
 prompt::_question() {
   case "$1" in
-    VLESS_DOMAIN) t "Domain of this server for origin nginx and direct VLESS|an A record to this server, port 80 open: Let's Encrypt checks it over HTTP" ;;
+    VLESS_DOMAIN) t "Domain of this server for direct VLESS and origin nginx|an A record to this server; with a CDN, port 80 open: Let's Encrypt checks it over HTTP" ;;
     HY2_DOMAIN) t 'Domain for Hysteria2 whose certificate this script issues|an A record to this server; - for none' ;;
-    CDN_DOMAIN) t 'Domain of the CDN resource|a CNAME to the CDN' ;;
-    ORIGIN_IP) t 'Public IPv4 of this server|the origin of the CDN resource' ;;
+    CDN_DOMAIN) t 'Domain of the CDN resource|a CNAME to the CDN; - for no CDN' ;;
+    ORIGIN_IP) t 'Public IPv4 of this server|the node address in the panel and the origin of the CDN resource' ;;
     XHTTP_PORT) t 'Local port of the xray xhttp inbound|' ;;
     XHTTP_PATH) t 'xhttp path|the same in the panel inbound and host' ;;
     NGINX_TLS_PORT) t 'Port where nginx accepts connections from the CDN edge|' ;;

@@ -34,6 +34,10 @@ certs::issue() {
   if [[ -n "${HY2_DOMAIN:-}" ]]; then
     env::require NODE_RELOAD_CMD
   fi
+  if [[ -z "$(certs::_domains)" ]]; then
+    log::info "$(t 'no certificate to issue: neither CDN_DOMAIN nor HY2_DOMAIN is set')"
+    return 0
+  fi
   certs::_render_acme_site
   while IFS= read -r domain; do
     if certs::_is_current "$domain"; then
@@ -83,15 +87,24 @@ certs::install_renew_hook() {
 
 # --- issuance ---------------------------------------------------------------------------
 
-# VLESS_DOMAIN always: origin nginx serves its certificate. Hysteria2 gets one when its
-# domain is set; an empty HY2_DOMAIN leaves the certificate of a server that already runs
-# it alone. CDN_DOMAIN gets none: it is a CNAME to the CDN, which HTTP-01 cannot validate,
-# and the edge serves the certificate of the CDN resource.
+# VLESS_DOMAIN with the CDN: origin nginx serves its certificate. Hysteria2 gets one when
+# its domain is set; an empty HY2_DOMAIN leaves the certificate of a server that already
+# runs it alone. CDN_DOMAIN gets none: it is a CNAME to the CDN, which HTTP-01 cannot
+# validate, and the edge serves the certificate of the CDN resource.
 certs::_domains() {
-  printf '%s\n' "$VLESS_DOMAIN"
-  if [[ -n "${HY2_DOMAIN:-}" && "$HY2_DOMAIN" != "$VLESS_DOMAIN" ]]; then
+  if env::has_cdn; then
+    printf '%s\n' "$VLESS_DOMAIN"
+  fi
+  if [[ -n "${HY2_DOMAIN:-}" ]] && { ! env::has_cdn || [[ "$HY2_DOMAIN" != "$VLESS_DOMAIN" ]]; }; then
     printf '%s\n' "$HY2_DOMAIN"
   fi
+}
+
+# A name the ACME server answers to, for the probes: the first domain it serves.
+certs::_probe_host() {
+  local domain
+  domain="$(certs::_domains | head -n 1)"
+  printf '%s' "${domain:-$VLESS_DOMAIN}"
 }
 
 # 0 when DOMAIN has a certificate that names it, stays valid for more than
@@ -169,11 +182,12 @@ certs::_acme_on() {
 # within milliseconds. One good answer proves little: waits for ten probes in a row,
 # each on a new connection, for up to 10 s.
 certs::_wait_for_acme() {
-  local token="probe-$$-$RANDOM" file="$SYSROOT$CERTS_WEBROOT$CERTS_PROBE" tries streak=0
+  local token="probe-$$-$RANDOM" file="$SYSROOT$CERTS_WEBROOT$CERTS_PROBE" tries streak=0 host
+  host="$(certs::_probe_host)"
   mkdir -p "${file%/*}"
   printf '%s' "$token" >"$file"
   for ((tries = 0; tries < 100 && streak < 10; tries++)); do
-    if [[ "$(curl -s --max-time 2 -H "Host: $VLESS_DOMAIN" "http://127.0.0.1$CERTS_PROBE" || true)" == "$token" ]]; then
+    if [[ "$(curl -s --max-time 2 -H "Host: $host" "http://127.0.0.1$CERTS_PROBE" || true)" == "$token" ]]; then
       streak=$((streak + 1))
     else
       streak=0
@@ -246,7 +260,7 @@ printf '%s' "\$token" >"\$probe"
 tries=0
 streak=0
 while [ "\$streak" -lt 10 ]; do
-  if [ "\$(curl -s --max-time 2 -H 'Host: $VLESS_DOMAIN' http://127.0.0.1$CERTS_PROBE)" = "\$token" ]; then
+  if [ "\$(curl -s --max-time 2 -H 'Host: $(certs::_probe_host)' http://127.0.0.1$CERTS_PROBE)" = "\$token" ]; then
     streak=\$((streak + 1))
   else
     streak=0
