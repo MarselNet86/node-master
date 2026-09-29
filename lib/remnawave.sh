@@ -193,7 +193,9 @@ remnawave::_guide() {
     "$(t 'Hosts: Hosts -> Create new host, one per inbound; Advanced -> Xray JSON template: the one from step 4')" \
     "${hosts[@]}"
   if env::has_cdn; then
-    remnawave::_step "" "$(t 'CDN resource (Timeweb)')" \
+    # The check through the CDN follows this step: the pause waits for Timeweb.
+    remnawave::_step_until "$(t 'Press Enter once the CDN resource is set up: the certificate issued and attached, the changes applied (up to 30 minutes). The check through the CDN comes next.')" \
+      "$(t 'CDN resource (Timeweb)')" \
       "$(t 'Source: %s:%s, HTTPS for the source on.' "$ip" "${NGINX_TLS_PORT:-8444}")" \
       "$(t "Distribution domain %s: a CNAME to the technical domain of the resource (*.cdn.twcstorage.ru), then Let's Encrypt in the Timeweb panel." "$CDN_DOMAIN")" \
       "$(t 'Caching stays on; ignoring cache headers, always online and large file acceleration stay off.')"
@@ -212,10 +214,22 @@ remnawave::_step() {
   fi
 }
 
+# A step without a file whose pause says what to wait for: PROMPT, then TITLE and LINEs as
+# remnawave::_step takes them.
+remnawave::_step_until() {
+  local prompt="$1"
+  shift
+  remnawave::_print "$@"
+  if ((pause > 0)) && remnawave::_interactive; then
+    remnawave::_wait "" "$prompt"
+  fi
+}
+
 # Waits for Enter; s (ы on a Russian layout) prints FILE to copy it from the terminal.
+# PROMPT, when given, replaces the plain one of a step without a file.
 remnawave::_wait() {
   local file="$1" key LC_ALL=C.UTF-8
-  remnawave::_ask_done "$file"
+  remnawave::_ask_done "$file" "${2-}"
   while IFS= read -rsn1 key; do
     case "$key" in
       "") break ;;
@@ -235,7 +249,7 @@ remnawave::_ask_done() {
   if [[ -n "$1" ]]; then
     printf '     %s%s%s ' "$UI_DIM" "$(t 'Enter when done, s shows %s:' "${1##*/}")" "$UI_RESET" >&2
   else
-    printf '     %s%s%s ' "$UI_DIM" "$(t 'Press Enter when done.')" "$UI_RESET" >&2
+    printf '     %s%s%s ' "$UI_DIM" "${2:-$(t 'Press Enter when done.')}" "$UI_RESET" >&2
   fi
 }
 

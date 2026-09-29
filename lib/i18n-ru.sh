@@ -250,6 +250,7 @@ declare -gA I18N_RU=(
   ["Obfuscation fields stay identical in the inbound and the host extra (remnawave/README.md)."]="Поля обфускации в инбаунде и extra хоста одинаковые (remnawave/README.md)."
   ["Enter when done, s shows %s:"]="Enter, когда готово; s покажет %s:"
   ["Press Enter when done."]="Нажмите Enter, когда готово."
+  ["Press Enter once the CDN resource is set up: the certificate issued and attached, the changes applied (up to 30 minutes). The check through the CDN comes next."]="Нажмите Enter, когда настройка CDN-ресурса завершится: сертификат выпущен и привязан, изменения применились (до 30 минут). Следом скрипт проверит связь через CDN."
   ["%s: copy from the next line"]="%s: копировать со следующей строки"
   ["end of %s"]="конец %s"
   ["no SECRET_KEY for the node: put SECRET_KEY and NODE_PORT from the docker-compose.yml that the panel shows into %s as NODE_SECRET_KEY and NODE_PORT, rerun ./deploy.sh"]="нет SECRET_KEY для ноды: впишите SECRET_KEY и NODE_PORT из docker-compose.yml, который показывает панель, в %s как NODE_SECRET_KEY и NODE_PORT и запустите ./deploy.sh снова"

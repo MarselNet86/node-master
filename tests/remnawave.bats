@@ -237,11 +237,14 @@ host_extra() {
   full_node
   emit_in_terminal
   [ "$status" -eq 0 ]
-  # Step 2 asks for the node key instead.
-  [ "$(grep -o 'when done' "$TMP/stderr" | wc -l)" -eq 5 ]
+  # Step 2 asks for the node key instead, and the CDN step waits for Timeweb: the check
+  # through the CDN follows it.
+  [ "$(grep -o 'when done' "$TMP/stderr" | wc -l)" -eq 4 ]
+  [ "$(grep -c 'Press Enter once the CDN resource is set up: the certificate issued and attached' "$TMP/stderr")" -eq 1 ]
   emit_in_terminal
   [ "$status" -eq 0 ]
   [ "$(grep -c 'when done' "$TMP/stderr")" -eq 0 ]
+  [ "$(grep -c 'once the CDN resource is set up' "$TMP/stderr")" -eq 0 ]
   [[ "$output" == *"1. Config profile"* ]]
 }
 
