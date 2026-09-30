@@ -5,6 +5,7 @@
 <p align="center"><b>Нода Remnawave с CDN, Reality и Hysteria2 одной командой.</b></p>
 
 <p align="center">
+  <a href="#установка"><img alt="Клоны репозитория" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMarselNet86%2Fnode-master%2Fstats%2Fbadge.json"></a>
   <a href="#что-нужно"><img alt="Ubuntu 22.04, 24.04 и 26.04" src="https://img.shields.io/badge/Ubuntu-22.04%20%7C%2024.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white"></a>
   <a href="#что-нужно"><img alt="Debian 12" src="https://img.shields.io/badge/Debian-12-A81D33?logo=debian&logoColor=white"></a>
   <a href="#подводные-камни"><img alt="Xray-core" src="https://img.shields.io/badge/Xray--core-26.3%20%7C%2026.6%2B-8b5cf6"></a>

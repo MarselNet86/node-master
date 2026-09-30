@@ -1,0 +1,50 @@
+# Counts the clones of the repository for the README badge. GitHub reports only the last
+# 14 days, so the counts go into the stats branch day by day: clones.json keeps every day,
+# badge.json is what shields.io reads. The traffic API wants a token with
+# Administration: read on this repository, in the secret TRAFFIC_TOKEN.
+name: clones
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: clones
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: stats
+
+      - name: Add the days GitHub reports to the history
+        env:
+          GH_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/traffic/clones" >latest.json
+          # A day seen again takes the newer counts: today's grow until midnight UTC.
+          jq -s '
+            (.[0].days // {}) as $old
+            | ((.[1].clones // []) | map({(.timestamp): {count, uniques}}) | add // {}) as $new
+            | ($old + $new) as $days
+            | {days: $days, total: ([$days[].count] | add // 0)}
+          ' clones.json latest.json >merged.json
+          mv merged.json clones.json
+          rm latest.json
+          jq '{schemaVersion: 1, label: "clones", message: (.total | tostring), color: "0f766e",
+            namedLogo: "git", logoColor: "white"}' clones.json >badge.json
+
+      - name: Commit the new counts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add clones.json badge.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(stats): clones up to $(date -u +%F)"
+            git push
+          fi
