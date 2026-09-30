@@ -1,4 +1,6 @@
-<p align="center"><img src="docs/readme/cover.jpg" width="920" alt="Обложка node-master: логотип в центре, от него защищённые каналы к VLESS, Hysteria2, CDN Timeweb и Remnawave на фоне карты России"></p>
+<p align="center"><img src="docs/readme/icon.svg" width="128" height="128" alt="Иконка node-master: зелёный маршрут от клиента через CDN к серверу на чёрном скруглённом квадрате"></p>
+
+<h1 align="center">node-master</h1>
 
 <p align="center"><b>Нода Remnawave с CDN, Reality и Hysteria2 одной командой.</b></p>
 
@@ -21,7 +23,7 @@
   <a href="#подводные-камни">Подводные камни</a>
 </p>
 
-<p align="center"><img src="docs/readme/hero.svg" width="920" alt="Терминал в конце установки: шаг 10/10 validate проходит четыре слоя проверки (xray, origin nginx, путь xhttp, CDN edge), затем ./check.sh проверяет три сервера подписки, CDN, Reality и Hysteria2, и все три OK"></p>
+<p align="center"><img src="docs/readme/cover.jpg" width="920" alt="Обложка node-master: логотип в центре, от него защищённые каналы к VLESS, Hysteria2, CDN Timeweb и Remnawave на фоне карты России"></p>
 
 ---
 
