@@ -81,6 +81,10 @@ remnawave::emit() {
     done
   fi
   jq -e . "$out"/*.json >/dev/null || log::die "$EXIT_FAILURE" "$(t 'the files in %s are not valid JSON' "$out")"
+  # New files go into the panel again from step 1.
+  if ((changed > 0)); then
+    rm -f -- "${out:?}/.guide-done"
+  fi
   remnawave::_guide "$out" "$changed"
 }
 
@@ -137,10 +141,14 @@ remnawave::_check_sync() {
 }
 
 # The steps, as data for the operator, so they go to stdout. PAUSE (the count of changed
-# files) makes a terminal session wait after each step: a rerun with the same files only
-# lists them.
+# files) makes a terminal session wait after each step. A rerun with the same files waits
+# only from the first step not confirmed yet, as out/remnawave/.guide-done keeps it: a
+# session closed halfway picks up there, a finished one only lists the steps.
 remnawave::_guide() {
   local out="${1#"$REPO_ROOT"/}" pause="$2" step=0 inbounds="" address bold="" reset=""
+  local confirmed
+  confirmed="$(cat "$REPO_ROOT/out/remnawave/.guide-done" 2>/dev/null || true)"
+  [[ "$confirmed" =~ ^[0-9]+$ ]] || confirmed=0
   local tag="${NODE_NAME^^}" ip title own_profile="" hosts_file=""
   local -a hosts=()
   # The colours follow stderr; a guide sent to a file stays plain.
@@ -209,8 +217,9 @@ remnawave::_step() {
   local file="$1"
   shift
   remnawave::_print "$@"
-  if ((pause > 0)) && remnawave::_interactive; then
+  if remnawave::_due; then
     remnawave::_wait "$file"
+    remnawave::_confirm
   fi
 }
 
@@ -220,9 +229,21 @@ remnawave::_step_until() {
   local prompt="$1"
   shift
   remnawave::_print "$@"
-  if ((pause > 0)) && remnawave::_interactive; then
+  if remnawave::_due; then
     remnawave::_wait "" "$prompt"
+    remnawave::_confirm
   fi
+}
+
+# Whether the step just printed waits, per remnawave::_guide: in a terminal, after files
+# changed or at a step not confirmed yet.
+remnawave::_due() {
+  remnawave::_interactive && ((pause > 0 || step > confirmed))
+}
+
+# Keeps the number of the step just confirmed with Enter.
+remnawave::_confirm() {
+  printf '%s\n' "$step" >"$REPO_ROOT/out/remnawave/.guide-done"
 }
 
 # Waits for Enter; s (ы on a Russian layout) prints FILE to copy it from the terminal.

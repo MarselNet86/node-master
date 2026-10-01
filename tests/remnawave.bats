@@ -248,6 +248,29 @@ host_extra() {
   [[ "$output" == *"1. Config profile"* ]]
 }
 
+@test "a session closed halfway waits again from the first step not confirmed" {
+  full_node
+  emit_in_terminal
+  [ "$status" -eq 0 ]
+  [ "$(cat "$OUT/.guide-done")" = 6 ]
+  # The terminal closed at step 5: steps 1, 3 and 4 had their Enter, step 2 has none.
+  echo 4 >"$OUT/.guide-done"
+  emit_in_terminal
+  [ "$status" -eq 0 ]
+  [ "$(grep -o 'when done' "$TMP/stderr" | wc -l)" -eq 1 ]
+  grep -q 'Enter when done, s shows host-xhttp-extra.json' "$TMP/stderr"
+  [ "$(grep -c 'once the CDN resource is set up' "$TMP/stderr")" -eq 1 ]
+  [ "$(cat "$OUT/.guide-done")" = 6 ]
+  # New files go into the panel again: a run without a terminal drops the progress, and
+  # the next session waits at every step.
+  XHTTP_PATH=/cdn/v1.bin/ emit
+  [ "$status" -eq 0 ]
+  [ ! -e "$OUT/.guide-done" ]
+  XHTTP_PATH=/cdn/v1.bin/ emit_in_terminal
+  [ "$status" -eq 0 ]
+  [ "$(grep -o 'when done' "$TMP/stderr" | wc -l)" -eq 4 ]
+}
+
 @test "in a terminal s at a pause shows the file of the step to copy, and so does ы" {
   local shown
   full_node
