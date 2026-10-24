@@ -346,7 +346,7 @@ prompt::_question() {
     CDN_DOMAIN) t 'Domain of the CDN resource|a CNAME to the CDN; - for no CDN' ;;
     ORIGIN_IP) t 'Public IPv4 of this server|the node address in the panel and the origin of the CDN resource' ;;
     XHTTP_PORT) t 'Local port of the xray xhttp inbound|' ;;
-    XHTTP_PATH) t 'xhttp path|the same in the panel inbound and host' ;;
+    XHTTP_PATH) t 'xhttp path|the inbound takes it as is, the panel host without the trailing slash' ;;
     NGINX_TLS_PORT) t 'Port where nginx accepts connections from the CDN edge|' ;;
     LE_EMAIL) t "Let's Encrypt contact email|- for none" ;;
     NODE_RELOAD_CMD) t 'Command that restarts the node after the Hysteria2 certificate renews|certbot runs it after each renewal; remnanode is the container from the panel' ;;

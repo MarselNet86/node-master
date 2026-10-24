@@ -108,7 +108,7 @@ CDN добавляется рядом с работающими VLESS Reality и
 | `CDN_DOMAIN` | пусто | домен CDN-ресурса; пусто — нода без CDN |
 | `ORIGIN_IP` | определяется сам | IPv4 сервера: адрес ноды в панели и источник CDN-ресурса |
 | `XHTTP_PORT` | `4443` | локальный порт xhttp-инбаунда для CDN |
-| `XHTTP_PATH` | `/api/v2.jpg/` | путь xhttp для CDN, одинаковый на инбаунде и хосте |
+| `XHTTP_PATH` | `/api/v2.jpg/` | путь xhttp для CDN: в инбаунде как есть, в хосте панели без слэша на конце |
 | `NGINX_TLS_PORT` | `8444` | порт nginx для CDN |
 | `LE_EMAIL` | пусто | email для Let's Encrypt |
 | `NODE_RELOAD_CMD` | `docker restart remnanode` | перезапуск ноды после продления сертификата Hysteria2 |
@@ -127,7 +127,7 @@ CDN добавляется рядом с работающими VLESS Reality и
 2. **Нода.** Nodes → Management → Create node, адрес — IP сервера, на последнем шаге выбрать профиль из шага 1. Панель покажет `docker-compose.yml`: вставьте в скрипт его `SECRET_KEY` и `NODE_PORT`, и скрипт запустит ноду.
 3. **Сквад.** Internal Squads → сквад пользователей → включить новые инбаунды. Без этого пользователи их не получат.
 4. **Шаблон подписки.** Templates → Xray JSON → вставить `subscription-xray-json.json`.
-5. **Хосты,** по одному на инбаунд, в Advanced каждого — шаблон из шага 4. У CDN-хоста адрес, SNI и host — `CDN_DOMAIN`, путь `XHTTP_PATH`, в `extra` — `host-xhttp-extra.json`.
+5. **Хосты,** по одному на инбаунд, в Advanced каждого — шаблон из шага 4. У CDN-хоста адрес, SNI и host — `CDN_DOMAIN`, путь — `XHTTP_PATH` без слэша на конце (`/api/v2.jpg`), в `extra` — `host-xhttp-extra.json`. Со слэшем edge Timeweb отвечает своим 403 (`x-reason-code: 7`): он пропускает к источнику только адреса, где последний сегмент пути с расширением.
 6. **Ресурс Timeweb,** если нужен CDN: как в разделе [«Что нужно»](#что-нужно).
 
 Теги инбаундов заканчиваются на `NODE_NAME` (`VLESS-REALITY-DE1`): панель требует уникальных тегов во всех профилях. Если у ноды уже есть свой профиль, добавьте в него только `inbound-xhttp-cdn.json`.

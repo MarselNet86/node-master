@@ -91,7 +91,7 @@ host_extra() {
   [[ "$output" == *"paste out/remnawave/config-profile.json"* ]]
   [[ "$output" == *"Put only out/remnawave/inbound-xhttp-cdn.json into its \"inbounds\""* ]]
   [[ "$output" == *"paste out/remnawave/subscription-xray-json.json"* ]]
-  [[ "$output" == *"CDN: inbound VLESS-XHTTP-CDN-NODE1, address cdn.example.com, port 443. Advanced: SNI and host cdn.example.com, path /api/v2.jpg/, security TLS, extra <- out/remnawave/host-xhttp-extra.json"* ]]
+  [[ "$output" == *"CDN: inbound VLESS-XHTTP-CDN-NODE1, address cdn.example.com, port 443. Advanced: SNI and host cdn.example.com, path /api/v2.jpg without the trailing slash (Timeweb answers 403 to it), security TLS, extra <- out/remnawave/host-xhttp-extra.json"* ]]
   [[ "$output" == *"Reality: inbound VLESS-REALITY-NODE1, address vless.example.com, port 443"* ]]
   [[ "$output" == *"Hysteria2: inbound HYSTERIA2-NODE1, address hy2.example.com"* ]]
   [[ "$output" == *"Source: 203.0.113.10:8444, HTTPS for the source on"* ]]

@@ -171,8 +171,10 @@ remnawave::_guide() {
     title="$(t 'Remnawave panel and the CDN resource, step by step.')"
     own_profile="$(t 'The node keeps a profile of its own? Put only %s/inbound-xhttp-cdn.json into its "inbounds".' "$out")"
     hosts_file="$REPO_ROOT/$out/host-xhttp-extra.json"
-    hosts+=("$(t 'CDN: inbound VLESS-XHTTP-CDN-%s, address %s, port 443. Advanced: SNI and host %s, path %s, security TLS, extra <- %s/host-xhttp-extra.json' \
-      "$tag" "$CDN_DOMAIN" "$CDN_DOMAIN" "$XHTTP_PATH" "$out")")
+    # The Timeweb edge forwards only a URL whose last segment has an extension and answers
+    # its own 403 to /api/v2.jpg/?…, so the host path goes without the slash; nginx adds it.
+    hosts+=("$(t 'CDN: inbound VLESS-XHTTP-CDN-%s, address %s, port 443. Advanced: SNI and host %s, path %s without the trailing slash (Timeweb answers 403 to it), security TLS, extra <- %s/host-xhttp-extra.json' \
+      "$tag" "$CDN_DOMAIN" "$CDN_DOMAIN" "${XHTTP_PATH%/}" "$out")")
   fi
   if [[ -n "${REALITY_SNI:-}" ]]; then
     hosts+=("$(t 'Reality: inbound VLESS-REALITY-%s, address %s, port 443' "$tag" "$address")")
