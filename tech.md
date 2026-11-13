@@ -6,6 +6,7 @@
 
 ## Changelog
 
+- **v3** — шаг `harden` (`lib/harden.sh`) после шагов панели: SSH только по ключу, fail2ban для sshd, MPTCP выключен, порт ноды только для панели. Контракт `.env` расширен одним необязательным ключом `PANEL_IP` (пусто — порт ноды открыт, как раньше); вопрос задаётся вместе с `NODE_SECRET_KEY`.
 - **v2** — xhttp-конфиги вынесены в `remnawave/` как отдельные версионируемые файлы для ручного копирования в панель (скрипт xray на ноде не пишет). Добавлен модуль `lib/remnawave.sh` (рендер шаблонов из `.env` в `out/remnawave/` + печать инструкций). Контракт `.env` не изменён: рендер использует уже существующие `CDN_DOMAIN`, `XHTTP_PATH`, `XHTTP_PORT`.
 - **v1** — исходное ядро. Зафиксированы дефолтные решения:
   - целевая ОС: Ubuntu 22.04 / 24.04 (первичная), Debian 12 (вторичная);
@@ -82,6 +83,7 @@ cdn-deploy/
 │   ├── nginx.sh                 # рендер шаблонов + nginx -t + reload
 │   ├── sysctl.sh                # сетевой тюнинг ядра + лимиты nofile
 │   ├── remnawave.sh             # рендер xhttp-конфигов из .env в out/ + инструкции по ручному вводу
+│   ├── harden.sh                # первая защита сервера: sshd, fail2ban, MPTCP, порт ноды
 │   └── validate.sh              # послойная проверка после установки
 ├── remnawave/                   # конфиги для РУЧНОГО ввода в панель (xray на ноде управляется панелью)
 │   ├── README.md                # что куда в панели + синхронизация + тюнинг-заметки
@@ -166,6 +168,10 @@ cdn-deploy/
 ### lib/remnawave.sh
 
 - `remnawave::emit` — `envsubst` шаблона `remnawave/inbound-xhttp-cdn.json.tmpl` в `out/remnawave/inbound-xhttp-cdn.json` (подстановка `CDN_DOMAIN`, `XHTTP_PATH`, `XHTTP_PORT`), копия `remnawave/host-xhttp-extra.json` в `out/remnawave/`. Печатает пути и инструкцию: какой файл в какое поле панели вставить (см. `remnawave/README.md`). Валидирует результат `jq -e . >/dev/null` (синтаксис JSON). Ничего в систему не пишет и на ноду не пушит: вывод только для ручного копирования.
+
+### lib/harden.sh
+
+- `harden::apply` — sshd только по ключу (drop-in пишется, когда у root есть ключ; `sshd -t` перед reload, отклонённый файл удаляется), джейл `sshd` в fail2ban, `net.mptcp.enabled = 0`, nft-таблица `cdn_deploy_guard` через свой systemd-юнит: `NODE_PORT` только для `PANEL_IP`, сброс TCP с IP-опциями. Ни одна часть не останавливает деплой: то, что не применилось, даёт предупреждение с действием.
 
 ### lib/validate.sh
 
