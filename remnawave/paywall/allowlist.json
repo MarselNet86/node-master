@@ -1,0 +1,14 @@
+{
+  "domains": [
+    "domain:trojanvpn.net",
+    "domain:yookassa.ru",
+    "domain:yoomoney.ru",
+    "domain:yastatic.net",
+    "domain:qr.nspk.ru",
+    "domain:heleket.com",
+    "domain:cloudflare-dns.com",
+    "domain:one.one.one.one",
+    "domain:dns.google"
+  ],
+  "ips": ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]
+}

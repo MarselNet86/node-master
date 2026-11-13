@@ -10,6 +10,7 @@ Xray на ноде управляется панелью Remnawave, скрипт
 | `inbound-xhttp-cdn.json.tmpl` | `inbounds` профиля | серверный VLESS-XHTTP-CDN инбаунд (`127.0.0.1:${XHTTP_PORT}`), тюненные буферы |
 | `host-xhttp-extra.json` | поле `extra` в редакторе хоста | клиентский transport-блок для подписки, чистый `xmux` |
 | `subscription-xray-json.json` | Templates → Xray JSON | шаблон подписки; `__OWN_DOMAINS__` скрипт заменяет зоной `CDN_DOMAIN` и доменами вне её |
+| `paywall/` | Config Profiles, Internal Squads, Hosts | сквад «только оплата» для истёкших клиентов: инбаунд, маршрутизация, путь на origin, шаги и проверка в `paywall/README.md` |
 
 Плейсхолдеры в `.tmpl` (`${CDN_DOMAIN}`, `${XHTTP_PATH}`, `${XHTTP_PORT}`, `${HY2_DOMAIN}`, `${REALITY_SNI}`, `${REALITY_PRIVATE_KEY}`, `${REALITY_SHORT_ID}`, `${NODE_TAG}`) заполняются скриптом из `.env`. `${NODE_TAG}` — это `NODE_NAME` заглавными: им заканчиваются теги инбаундов, потому что панель требует уникальные теги во всех профилях. Reality попадает в профиль при заданном `REALITY_SNI`, Hysteria2 при заданном `HY2_DOMAIN`. `host-xhttp-extra.json` статичный.
 
