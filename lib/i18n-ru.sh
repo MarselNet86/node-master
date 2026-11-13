@@ -262,4 +262,20 @@ declare -gA I18N_RU=(
   ["Remnawave panel, step by step."]="Панель Remnawave по шагам."
   # validate.sh, the edge certificate
   ["certificate unreadable"]="сертификат не читается"
+  # harden.sh
+  ["no SSH key in %s: password logins stay on. Add a key with ssh-copy-id and rerun ./deploy.sh"]="в %s нет SSH-ключа: вход по паролю остаётся. Добавьте ключ через ssh-copy-id и запустите ./deploy.sh снова"
+  ["sshd -t refused %s: removed it, password logins stay on"]="sshd -t не принял %s: файл удалён, вход по паролю остаётся"
+  ["sshd did not reload: see systemctl status ssh"]="sshd не перечитал конфиг: смотрите systemctl status ssh"
+  ["SSH takes keys only: check a new connection before you close this one"]="SSH теперь пускает только по ключу: проверьте новое подключение, не закрывая это"
+  ["sshd still accepts passwords: an earlier file in /etc/ssh/sshd_config.d or sshd_config without Include overrides %s"]="sshd всё ещё принимает пароли: %s перекрыт более ранним файлом в /etc/ssh/sshd_config.d либо в sshd_config нет Include"
+  ["fail2ban did not start: see systemctl status fail2ban"]="fail2ban не запустился: смотрите systemctl status fail2ban"
+  ["the kernel has no MPTCP: nothing to switch off"]="в ядре нет MPTCP: выключать нечего"
+  ["cannot switch MPTCP off: a container kernel forbids it, update the kernel of the host"]="MPTCP не выключается: ядро контейнера это запрещает, обновите ядро хоста"
+  ["PANEL_IP is empty: port %s of the node answers anyone. Put the address the panel connects from into %s and rerun ./deploy.sh"]="PANEL_IP пуст: порт %s ноды отвечает всем. Впишите адрес, с которого подключается панель, в %s и запустите ./deploy.sh снова"
+  ["nft refused %s: the rules are not loaded, see the error above"]="nft не принял %s: правила не загружены, ошибка выше"
+  ["the nft rules did not load: see systemctl status %s"]="правила nft не загрузились: смотрите systemctl status %s"
+  ["SSH with keys only once root has one; fail2ban for sshd; MPTCP off; nft: port %s of the node for the panel %s alone"]="SSH только по ключу, когда у root он есть; fail2ban для sshd; MPTCP выключен; nft: порт %s ноды только для панели %s"
+  ["SSH with keys only once root has one; fail2ban for sshd; MPTCP off; nft: port %s of the node stays open, PANEL_IP is not set"]="SSH только по ключу, когда у root он есть; fail2ban для sshd; MPTCP выключен; nft: порт %s ноды остаётся открытым, PANEL_IP не задан"
+  ["expected an IPv4 address like 203.0.113.10, or - to leave NODE_PORT open to anyone"]="нужен IPv4-адрес вида 203.0.113.10 или -, чтобы оставить NODE_PORT открытым для всех"
+  ["IPv4 that the panel connects from|only it will reach NODE_PORT of the node; - to leave the port open to anyone"]="IPv4, с которого подключается панель|только он достучится до NODE_PORT ноды; -, чтобы оставить порт открытым для всех"
 )
