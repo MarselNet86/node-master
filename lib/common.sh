@@ -226,7 +226,7 @@ is::port() {
 readonly -a ENV_KEYS=(
   UI_LANG VLESS_DOMAIN HY2_DOMAIN CDN_DOMAIN ORIGIN_IP XHTTP_PORT XHTTP_PATH NGINX_TLS_PORT
   LE_EMAIL NODE_RELOAD_CMD REALITY_SNI REALITY_PRIVATE_KEY REALITY_SHORT_ID
-  NODE_NAME NODE_PORT NODE_SECRET_KEY
+  NODE_NAME NODE_PORT NODE_SECRET_KEY PANEL_IP
 )
 # Keys an older .env holds that nothing reads anymore. env::load skips them without a
 # warning, and the next write of .env drops them. UUID was a VLESS client id: the panel

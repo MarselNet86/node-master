@@ -45,7 +45,7 @@ step_line() {
   [ "$status" -eq 0 ]
   [[ "$output" == "cdn-deploy dry run: nothing is changed."* ]]
   steps="$(printf '%s\n' "$output" | sed -nE 's/^ +[0-9]+\. ([a-z-]+) .*/\1/p' | tr '\n' ' ')"
-  [ "$steps" = "preflight input config packages certs renew-hook sysctl nginx remnawave validate " ]
+  [ "$steps" = "preflight input config packages certs renew-hook sysctl nginx remnawave harden validate " ]
 }
 
 @test "--dry-run on empty input shows the contract defaults and unset required values" {
@@ -61,6 +61,8 @@ step_line() {
   has_line 'nginx .*no origin site without CDN_DOMAIN'
   has_line '^ +NODE_PORT +2222$'
   has_line '^ +NODE_SECRET_KEY +<unset>$'
+  has_line '^ +PANEL_IP +<unset>$'
+  has_line 'harden .*port 2222 of the node stays open, PANEL_IP is not set'
   has_line 'remnawave .*start the node from /opt/remnanode/docker-compose\.yml with its SECRET_KEY, installing Docker'
 }
 
@@ -200,7 +202,8 @@ EOF
 @test "the packages step installs every command a module requires, beyond the base system" {
   local cmd pkg plan missing=""
   local -A from=([sysctl]=procps [systemctl]=base [certbot]=certbot [openssl]=openssl
-    [nginx]=nginx [envsubst]=gettext-base [curl]=curl [jq]=jq [ss]=iproute2)
+    [nginx]=nginx [envsubst]=gettext-base [curl]=curl [jq]=jq [ss]=iproute2
+    [sshd]=base [nft]=nftables [fail2ban-client]=fail2ban)
   deploy --dry-run
   plan="$(printf '%s\n' "$output" | sed -nE 's/.* packages +install missing: //p')"
   [ -n "$plan" ]

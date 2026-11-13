@@ -570,6 +570,23 @@ EOF
   [ "$NODE_PORT" = 2222 ]
 }
 
+@test "prompt::validate: PANEL_IP is an IPv4 address or empty, which leaves the node port open" {
+  valid PANEL_IP "" 203.0.113.7
+  invalid PANEL_IP panel.example.com 203.0.113 203.0.113.256 2001:db8::1
+  [ "$(prompt::_normalize PANEL_IP -)" = "" ]
+}
+
+@test "prompt::node asks for the address of the panel after the key and the port" {
+  local key
+  key="$(node_key)"
+  env::load "$ENV_EXAMPLE"
+  printf '%s\n\n203.0.113.7\n' "$key" >"$TMP/answers"
+  run prompt::node "$key" "" <"$TMP/answers"
+  [ "$status" -eq 0 ]
+  env::load "$ENV_FILE"
+  [ "$PANEL_IP" = 203.0.113.7 ]
+}
+
 @test "prompt::validate: the node name is a short label that ends the inbound tags" {
   valid NODE_NAME de1 a node-1 0123456789abcdef
   invalid NODE_NAME "" -de1 de1- de_1 de.1 "de 1" 0123456789abcdefg DE1

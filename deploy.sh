@@ -17,6 +17,8 @@ source "$REPO_ROOT/lib/sysctl.sh"
 source "$REPO_ROOT/lib/node.sh"
 # shellcheck source=lib/remnawave.sh
 source "$REPO_ROOT/lib/remnawave.sh"
+# shellcheck source=lib/harden.sh
+source "$REPO_ROOT/lib/harden.sh"
 # shellcheck source=lib/validate.sh
 source "$REPO_ROOT/lib/validate.sh"
 
@@ -30,8 +32,10 @@ deploy::failed() {
 
 # System packages the stack runs on (tech.md §2). procps brings sysctl and iproute2 ss,
 # which finds the UDP port of Hysteria2: minimal Debian images lack them.
+# nftables and fail2ban are for the hardening step; python3-systemd lets fail2ban read the
+# journal, where sshd logs on these systems.
 readonly -a PACKAGES=(nginx certbot curl jq openssl coreutils
-  gettext-base procps iproute2)
+  gettext-base procps iproute2 nftables fail2ban python3-systemd)
 
 # Steps in execution order: "<id> <function> [<module function it needs>]".
 # A step whose function does not exist yet is marked in the plan and stops a real run.
@@ -39,6 +43,7 @@ readonly -a PACKAGES=(nginx certbot curl jq openssl coreutils
 # because somaxconn caps the listen backlog at the moment nginx opens its port.
 # The panel files follow them: the panel asks for the profile when it creates a node, and
 # a node created from it starts with the Hysteria2 certificate and the tuned kernel in place.
+# Hardening follows the panel step, which is where NODE_PORT and PANEL_IP come from.
 readonly -a STEPS=(
   "preflight deploy::preflight"
   "input prompt::collect"
@@ -49,6 +54,7 @@ readonly -a STEPS=(
   "sysctl sysctl::apply"
   "nginx nginx::render"
   "remnawave remnawave::emit"
+  "harden harden::apply"
   "validate validate::layers"
 )
 
@@ -194,6 +200,15 @@ deploy::describe() {
       t 'render out/remnawave/ for %s: config profile, Xray JSON template%s; walk through the panel, the profile first, then the node with it; start the node from %s with its SECRET_KEY%s, installing Docker when it is missing' \
         "$(deploy::inbounds)" "$(env::has_cdn && t ', host extra and xhttp inbound for the CDN')" \
         "$NODE_COMPOSE" "$([[ -n "${HY2_DOMAIN:-}" ]] && t ' and /etc/letsencrypt mounted for Hysteria2')"
+      ;;
+    harden)
+      if [[ -n "${PANEL_IP:-}" ]]; then
+        t 'SSH with keys only once root has one; fail2ban for sshd; MPTCP off; nft: port %s of the node for the panel %s alone' \
+          "$(deploy::show NODE_PORT)" "$PANEL_IP"
+      else
+        t 'SSH with keys only once root has one; fail2ban for sshd; MPTCP off; nft: port %s of the node stays open, PANEL_IP is not set' \
+          "$(deploy::show NODE_PORT)"
+      fi
       ;;
     validate)
       if env::has_cdn; then

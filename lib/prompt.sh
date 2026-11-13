@@ -96,7 +96,7 @@ prompt::_asks() {
   local key="$1" pending=" ${2-} " by
   case "$key" in
     # Panel step 2 asks for them: the panel creates the node from the rendered profile.
-    NODE_PORT | NODE_SECRET_KEY) return 1 ;;
+    NODE_PORT | NODE_SECRET_KEY | PANEL_IP) return 1 ;;
     # prompt::language asks for it before the survey.
     UI_LANG) return 1 ;;
     # The restart makes the node load a renewed HY2_DOMAIN certificate.
@@ -213,6 +213,11 @@ prompt::validate() {
     NODE_SECRET_KEY)
       reason="$(prompt::_node_key_problem "$value")"
       ;;
+    PANEL_IP)
+      # Empty leaves the node port open to anyone, as it was before this setting.
+      [[ -z "$value" ]] || is::ipv4 "$value" ||
+        reason="$(t 'expected an IPv4 address like 203.0.113.10, or - to leave NODE_PORT open to anyone')"
+      ;;
     UI_LANG)
       [[ -z "$value" || "$value" == en || "$value" == ru ]] || reason="$(t 'expected en or ru')"
       ;;
@@ -245,7 +250,7 @@ prompt::_node_key_problem() {
 prompt::_normalize() {
   local key="$1" value="$2"
   case "$key" in
-    VLESS_DOMAIN | HY2_DOMAIN | CDN_DOMAIN | LE_EMAIL | REALITY_SNI)
+    VLESS_DOMAIN | HY2_DOMAIN | CDN_DOMAIN | LE_EMAIL | REALITY_SNI | PANEL_IP)
       if [[ "$value" == - ]]; then
         value=""
       fi
@@ -355,6 +360,7 @@ prompt::_question() {
     REALITY_SHORT_ID) t 'Reality short id|hex' ;;
     NODE_NAME) t 'Short name of this node for the panel|the inbound tags end with it, de1 gives VLESS-REALITY-DE1: the panel wants every tag unique' ;;
     NODE_PORT) t 'NODE_PORT of the node|from the same docker-compose.yml; the panel connects to the node on it' ;;
+    PANEL_IP) t 'IPv4 that the panel connects from|only it will reach NODE_PORT of the node; - to leave the port open to anyone' ;;
     NODE_SECRET_KEY) t 'SECRET_KEY of the node|from the docker-compose.yml that the panel shows; input hidden: paste the value or its whole line' ;;
   esac
 }
@@ -464,7 +470,8 @@ prompt::_new_short_id() {
 }
 
 # Panel step 2: SECRET_KEY and NODE_PORT of the node that the panel has just created, from
-# the docker-compose.yml it shows. Asked once and kept in .env. SECRET and PORT, the values
+# the docker-compose.yml it shows, and the address of the panel, which the hardening step
+# opens NODE_PORT for. Asked once and kept in .env. SECRET and PORT, the values
 # of a compose file set up by hand, are the defaults, and input that has ended takes them.
 # Returns 1 when no key comes from anywhere.
 prompt::node() {
@@ -478,6 +485,7 @@ prompt::node() {
   UI_NUMBER=""
   prompt::_ask NODE_SECRET_KEY "$secret" "${secret:+$(t 'from docker-compose.yml')}"
   prompt::_ask NODE_PORT "${port:-${NODE_PORT:-}}"
+  prompt::_ask PANEL_IP
   prompt::_write_env
 }
 
